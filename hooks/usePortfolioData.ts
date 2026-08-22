@@ -1,0 +1,824 @@
+
+import { useState, useMemo, useEffect } from 'react';
+import { AssetContext, Trade, PnLRecord, LedgerRecord, DividendRecord, WatchlistItem, ViewState, CashHolding } from '../types';
+import { calculateFIFO, calculateXIRR, PerStockData, calculateNetAssetValue } from '../utils/financials';
+import { parseMarketDataCSV, parseIndianEquity, parseInternationalEquity, parseMutualFundCSV, parseGoldETFCSV, parseCurrencyRatesCSV, ParseResult } from '../services/csvParsers';
+
+type UploadType = 'PNL' | 'LEDGER' | 'DIVIDEND' | 'TRADE_HISTORY' | 'MARKET_DATA' | 'PORTFOLIO_SNAPSHOT' | 'CURRENCY_RATES';
+
+interface UploadMeta {
+    trades?: string;
+    pnl?: string;
+    ledger?: string;
+    dividend?: string;
+    market?: string;
+    portfolio?: string;
+    marketDate?: string;
+}
+
+const getStorageKeys = (context: AssetContext) => {
+    let prefix = 'dhan';
+    if (context === 'INTERNATIONAL_EQUITY') prefix = 'intl';
+    else if (context === 'GOLD_ETF') prefix = 'gold';
+    else if (context === 'CASH_EQUIVALENTS') prefix = 'cash';
+    else if (context === 'MUTUAL_FUNDS') prefix = 'mf';
+
+    return {
+        TRADES: `${prefix}_trades`,
+        PNL: `${prefix}_pnl`,
+        LEDGER: `${prefix}_ledger`,
+        DIVIDENDS: `${prefix}_dividends`,
+        PRICES: `${prefix}_prices`,
+        WATCHLIST: `${prefix}_watchlist`,
+        META: `${prefix}_meta`,
+        SUMMARY: `${prefix}_summary`,
+        SHEET_ID: `${prefix}_sheet_id`,
+        MF_HOLDINGS: `${prefix}_holdings`, 
+        GOLD_HOLDINGS: `${prefix}_holdings`,
+        CASH_HOLDINGS: `${prefix}_holdings`,
+        BASE_TRADES: `${prefix}_base_trades`,
+        BASE_SUMMARY: `${prefix}_base_summary`
+    };
+};
+
+// Explicit URL for Mutual Funds as provided
+const MUTUAL_FUND_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTXbYB5_8MwjNl-J6vYg7_vxhr2ks3F46pXZbzZBLz7nuCCvxP24nLYZicQzxo5ej00hxIIw7Eduh1n/pub?gid=0&single=true&output=csv";
+// Explicit URL for Gold ETF
+const GOLD_ETF_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRyY8J5hELCaeUrMKMLOd2rU_tbdPUiR_dUG3llLRa2YKoP41cMyKkaQAzXBoE1IvCBpUuAa2Ld0Hri/pub?gid=0&single=true&output=csv";
+
+export const usePortfolioData = (context: AssetContext) => {
+    const STORAGE_KEYS = useMemo(() => getStorageKeys(context), [context]);
+
+    // -- State --
+    const [trades, setTrades] = useState<Trade[]>(() => {
+        const storedTrades = JSON.parse(localStorage.getItem(STORAGE_KEYS.TRADES) || '[]');
+        const storedBaseTrades = JSON.parse(localStorage.getItem(STORAGE_KEYS.BASE_TRADES) || '[]');
+        let combined = [...storedBaseTrades, ...storedTrades];
+        
+        // Deduplicate trades by ID to fix any corruption from double-migration
+        const uniqueTrades: Trade[] = [];
+        const seen = new Set();
+        for (const t of combined) {
+            if (!seen.has(t.id)) {
+                seen.add(t.id);
+                uniqueTrades.push(t);
+            }
+        }
+
+        if (storedBaseTrades && storedBaseTrades.length > 0 || uniqueTrades.length !== storedTrades.length) {
+            localStorage.setItem(STORAGE_KEYS.TRADES, JSON.stringify(uniqueTrades));
+            localStorage.removeItem(STORAGE_KEYS.BASE_TRADES);
+        }
+        return uniqueTrades;
+    });
+    const [pnlData, setPnlData] = useState<PnLRecord[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PNL) || '[]'));
+    const [ledgerData, setLedgerData] = useState<LedgerRecord[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.LEDGER) || '[]'));
+    const [dividendData, setDividendData] = useState<DividendRecord[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.DIVIDENDS) || '[]'));
+    const [priceData, setPriceData] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES) || '{}'));
+    const [assetCurrencies, setAssetCurrencies] = useState<Record<string, string>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_currencies') || '{}'));
+    const [portfolioPrices, setPortfolioPrices] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_portfolio') || '{}'));
+    const [portfolioCurrencies, setPortfolioCurrencies] = useState<Record<string, string>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_portfolio_currencies') || '{}'));
+    const [portfolioValues, setPortfolioValues] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_portfolio_values') || '{}'));
+    const [currencyRates, setCurrencyRates] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_rates') || '{}'));
+    const [watchlist, setWatchlist] = useState<WatchlistItem[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.WATCHLIST) || '[]'));
+    const [uploadMeta, setUploadMeta] = useState<UploadMeta>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.META) || '{}'));
+    
+    // Base Baseline State
+    const [baseTrades, setBaseTrades] = useState<Trade[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.BASE_TRADES) || '[]'));
+    const [baseSummary, setBaseSummary] = useState<{ charges: number; realizedPnL: number; dividends: number }>(() => {
+        try {
+            return JSON.parse(localStorage.getItem(STORAGE_KEYS.BASE_SUMMARY) || '{"charges":0,"realizedPnL":0,"dividends":0}');
+        } catch (e) {
+            return { charges: 0, realizedPnL: 0, dividends: 0 };
+        }
+    });
+
+    
+    // MF Specific State
+    const [mfHoldings, setMfHoldings] = useState<any[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.MF_HOLDINGS) || '[]'));
+    // Gold Specific State
+    const [goldHoldings, setGoldHoldings] = useState<any[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.GOLD_HOLDINGS) || '[]'));
+    // Cash Specific State
+    const [cashHoldings, setCashHoldings] = useState<CashHolding[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.CASH_HOLDINGS) || '[]'));
+    
+    // Global Market Date - Defaults to Today (Local Time)
+    const [globalMarketDate, setGlobalMarketDate] = useState(() => {
+        const saved = localStorage.getItem('GLOBAL_MARKET_DATE');
+        if (saved) return saved;
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    });
+
+    const [summary, setSummary] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.SUMMARY) || '{}'));
+    const [sheetId, setSheetId] = useState<string>(() => {
+        let saved = localStorage.getItem(STORAGE_KEYS.SHEET_ID);
+        if (saved) {
+             try { saved = JSON.parse(saved) as string; } catch(e) {}
+             // Sanitize: If it's a URL, extract ID
+             const match = saved?.match(/\/d\/([a-zA-Z0-9-_]+)/);
+             if (match) return match[1];
+             // If it looks like a valid ID (alphanumeric, no spaces, reasonable length)
+             if (saved && /^[a-zA-Z0-9-_]{10,}$/.test(saved)) return saved;
+        }
+        if (context === 'INTERNATIONAL_EQUITY') return "1zQFW9FHFoyvw4uZR4z3klFeoCIGJPUlq7QuDYwz4lEY";
+        if (context === 'MUTUAL_FUNDS') return "LINKED_TO_PUB_URL_MF"; 
+        if (context === 'GOLD_ETF') return "LINKED_TO_PUB_URL_GOLD";
+        return "1htAAZP9eWVH0sq1BHbiS-dKJNzcP-uoBEW6GXp4N3HI";
+    });
+
+    const [lastUploadPreview, setLastUploadPreview] = useState<any[]>([]);
+
+    // -- Persistence --
+    const persist = (key: string, data: any) => {
+        try { 
+            localStorage.setItem(key, JSON.stringify(data)); 
+            window.dispatchEvent(new CustomEvent('portfolio_storage_update', { detail: { key, data } }));
+        } catch (e) { console.warn("Storage Error", e); }
+    };
+
+    useEffect(() => {
+        const handleCustomUpdate = (e: any) => {
+            if (!e.detail) return;
+            const { key, data } = e.detail;
+            if (key === STORAGE_KEYS.TRADES) setTrades(data);
+            else if (key === STORAGE_KEYS.PRICES) setPriceData(data);
+            else if (key === STORAGE_KEYS.SUMMARY) setSummary(data);
+            else if (key === STORAGE_KEYS.LEDGER) setLedgerData(data);
+            else if (key === STORAGE_KEYS.DIVIDENDS) setDividendData(data);
+            else if (key === STORAGE_KEYS.META) setUploadMeta(data);
+        };
+        window.addEventListener('portfolio_storage_update', handleCustomUpdate);
+        return () => window.removeEventListener('portfolio_storage_update', handleCustomUpdate);
+    }, [STORAGE_KEYS]);
+
+    const updateMeta = (updates: Partial<UploadMeta>) => {
+        const newMeta = { ...uploadMeta, ...updates };
+        setUploadMeta(newMeta);
+        persist(STORAGE_KEYS.META, newMeta);
+    };
+
+    const updateSummary = (updates: any) => {
+        const newSummary = { ...summary, ...updates };
+        setSummary(newSummary);
+        persist(STORAGE_KEYS.SUMMARY, newSummary);
+    };
+
+    const saveSheetId = (id: string) => {
+        setSheetId(id);
+        persist(STORAGE_KEYS.SHEET_ID, id);
+    }
+
+    const updateGlobalDate = (date: string) => {
+        setGlobalMarketDate(date);
+        localStorage.setItem('GLOBAL_MARKET_DATE', date);
+        updateMeta({ marketDate: date });
+    }
+
+    const addTrade = (trade: Trade, cashStrategy: { type: 'KEEP' | 'AUTO' | 'MANUAL', manualValue?: number } = { type: 'AUTO' }) => {
+        const isTrade = trade.type === 'BUY' || trade.type === 'SELL';
+        const fee = isTrade ? Math.abs(trade.quantity * trade.price) * 0.001 : 0;
+        
+        let newNetAmount = trade.netAmount;
+        if (isTrade) {
+            newNetAmount = trade.type === 'BUY' ? trade.netAmount - fee : trade.netAmount - fee;
+        }
+
+        const finalTrade = { ...trade, netAmount: newNetAmount };
+        const updated = [...trades, finalTrade];
+        
+        setTrades(updated);
+        persist(STORAGE_KEYS.TRADES, updated);
+        updateMeta({ trades: new Date().toISOString() });
+
+        // Update charges and cash
+        let currentCash = summary.cash;
+        if (currentCash === undefined && ledgerData.length > 0) {
+             const sorted = [...ledgerData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+             if (sorted.length > 0) currentCash = sorted[0].balance;
+        }
+
+        let newCash = currentCash;
+        if (cashStrategy.type === 'AUTO') {
+            newCash = (currentCash || 0) + newNetAmount;
+        } else if (cashStrategy.type === 'MANUAL' && cashStrategy.manualValue !== undefined) {
+            newCash = cashStrategy.manualValue;
+        }
+
+        updateSummary({ 
+            charges: (summary.charges || 0) + fee,
+            cash: newCash
+        });
+    };
+
+    const updateTrade = (updatedTrade: Trade, cashStrategy: { type: 'KEEP' | 'AUTO' | 'MANUAL', manualValue?: number } = { type: 'AUTO' }) => {
+        const oldTradeInTrades = trades.find(t => t.id === updatedTrade.id);
+        const oldTradeInBase = baseTrades.find(t => t.id === updatedTrade.id);
+        const oldTrade = oldTradeInTrades || oldTradeInBase;
+        
+        if (!oldTrade) return;
+
+        const isTrade = updatedTrade.type === 'BUY' || updatedTrade.type === 'SELL';
+        const fee = isTrade ? Math.abs(updatedTrade.quantity * updatedTrade.price) * 0.001 : 0;
+        
+        const oldIsTrade = oldTrade.type === 'BUY' || oldTrade.type === 'SELL';
+        const oldFee = oldIsTrade ? Math.abs(oldTrade.quantity * oldTrade.price) * 0.001 : 0;
+
+        let newNetAmount = updatedTrade.netAmount;
+        if (isTrade) {
+            newNetAmount = updatedTrade.type === 'BUY' 
+                ? -(updatedTrade.quantity * updatedTrade.price) - fee 
+                : (updatedTrade.quantity * updatedTrade.price) - fee;
+            updatedTrade.netAmount = newNetAmount;
+        }
+
+        const feeDiff = fee - oldFee;
+        const netAmountDiff = newNetAmount - oldTrade.netAmount;
+
+        if (oldTradeInTrades) {
+            const updated = trades.map(t => t.id === updatedTrade.id ? updatedTrade : t);
+            setTrades(updated);
+            persist(STORAGE_KEYS.TRADES, updated);
+            updateMeta({ trades: new Date().toISOString() });
+        } else if (oldTradeInBase) {
+            const updated = baseTrades.map(t => t.id === updatedTrade.id ? updatedTrade : t);
+            setBaseTrades(updated);
+            persist(STORAGE_KEYS.BASE_TRADES, updated);
+        }
+
+        let currentCash = summary.cash;
+        if (currentCash === undefined && ledgerData.length > 0) {
+             const sorted = [...ledgerData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+             if (sorted.length > 0) currentCash = sorted[0].balance;
+        }
+
+        let newCash = currentCash;
+        if (cashStrategy.type === 'AUTO') {
+            newCash = (currentCash || 0) + netAmountDiff;
+        } else if (cashStrategy.type === 'MANUAL' && cashStrategy.manualValue !== undefined) {
+            newCash = cashStrategy.manualValue;
+        }
+
+        updateSummary({ 
+            charges: (summary.charges || 0) + feeDiff,
+            cash: newCash
+        });
+    };
+
+    const deleteTrade = (id: string, cashStrategy: { type: 'KEEP' | 'AUTO' | 'MANUAL', manualValue?: number } = { type: 'AUTO' }) => {
+        const oldTradeInTrades = trades.find(t => t.id === id);
+        const oldTradeInBase = baseTrades.find(t => t.id === id);
+        const oldTrade = oldTradeInTrades || oldTradeInBase;
+        
+        if (!oldTrade) return;
+
+        const oldIsTrade = oldTrade.type === 'BUY' || oldTrade.type === 'SELL';
+        const oldFee = oldIsTrade ? Math.abs(oldTrade.quantity * oldTrade.price) * 0.001 : 0;
+
+        if (oldTradeInTrades) {
+            const updated = trades.filter(t => t.id !== id);
+            setTrades(updated);
+            persist(STORAGE_KEYS.TRADES, updated);
+            updateMeta({ trades: new Date().toISOString() });
+        } else if (oldTradeInBase) {
+            const updated = baseTrades.filter(t => t.id !== id);
+            setBaseTrades(updated);
+            persist(STORAGE_KEYS.BASE_TRADES, updated);
+        }
+
+        let currentCash = summary.cash;
+        if (currentCash === undefined && ledgerData.length > 0) {
+             const sorted = [...ledgerData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+             if (sorted.length > 0) currentCash = sorted[0].balance;
+        }
+
+        let newCash = currentCash;
+        if (cashStrategy.type === 'AUTO') {
+            newCash = (currentCash || 0) - oldTrade.netAmount;
+        } else if (cashStrategy.type === 'MANUAL' && cashStrategy.manualValue !== undefined) {
+            newCash = cashStrategy.manualValue;
+        }
+
+        updateSummary({ 
+            charges: Math.max(0, (summary.charges || 0) - oldFee),
+            cash: newCash
+        });
+    };
+
+    const convertToBaseData = () => {
+        const accumulatedNewTrades = [...baseTrades, ...trades];
+        const currentDividends = dividendData.reduce((acc, curr) => acc + curr.amount, 0);
+        const accumulatedDividends = baseSummary.dividends + Math.max(currentDividends, summary.dividends || 0);
+        const accumulatedCharges = baseSummary.charges + (summary.charges || 0);
+
+        const newBaseSummary = {
+            charges: accumulatedCharges,
+            realizedPnL: 0, // Realized PnL is computed dynamically from allTrades, so we don't store it here to avoid double counting
+            dividends: accumulatedDividends
+        };
+
+        // Persist Base Values
+        setBaseTrades(accumulatedNewTrades);
+        persist(STORAGE_KEYS.BASE_TRADES, accumulatedNewTrades);
+
+        setBaseSummary(newBaseSummary);
+        persist(STORAGE_KEYS.BASE_SUMMARY, newBaseSummary);
+
+        // Clear active uploaded files
+        setTrades([]);
+        persist(STORAGE_KEYS.TRADES, []);
+        
+        setPnlData([]);
+        persist(STORAGE_KEYS.PNL, []);
+        
+        setLedgerData([]);
+        persist(STORAGE_KEYS.LEDGER, []);
+        
+        setDividendData([]);
+        persist(STORAGE_KEYS.DIVIDENDS, []);
+        
+        setSummary({ cash: summary.cash });
+        persist(STORAGE_KEYS.SUMMARY, { cash: summary.cash });
+
+        updateMeta({
+            trades: undefined,
+            pnl: undefined,
+            ledger: undefined,
+            dividend: undefined
+        });
+    };
+
+    const clearBaseData = () => {
+        setBaseTrades([]);
+        localStorage.removeItem(STORAGE_KEYS.BASE_TRADES);
+
+        const defaultSummary = { charges: 0, realizedPnL: 0, dividends: 0 };
+        setBaseSummary(defaultSummary);
+        localStorage.removeItem(STORAGE_KEYS.BASE_SUMMARY);
+    };
+
+    // -- Actions --
+    const clearAllData = () => {
+        Object.values(STORAGE_KEYS).forEach(k => localStorage.removeItem(k as string));
+        setTrades([]); setPnlData([]); setLedgerData([]); setDividendData([]); setPriceData({}); setWatchlist([]); setUploadMeta({}); setSummary({}); setMfHoldings([]); setGoldHoldings([]); setCashHoldings([]);
+    };
+
+    // -- Watchlist Actions --
+    const addToWatchlist = (ticker: string, initialData?: Partial<WatchlistItem>) => {
+        if (watchlist.some(w => w.ticker === ticker)) return;
+        const newItem: WatchlistItem = { 
+            id: Math.random().toString(36).substr(2, 9), 
+            ticker, 
+            desiredEntryPrice: 0, 
+            intrinsicValue: 0, 
+            researchLink: '',
+            ...initialData // Spread initial data like s1, s2, s3, etc.
+        };
+        const updated = [...watchlist, newItem];
+        setWatchlist(updated);
+        persist(STORAGE_KEYS.WATCHLIST, updated);
+    };
+    const removeFromWatchlist = (id: string) => {
+        const updated = watchlist.filter(w => w.id !== id);
+        setWatchlist(updated);
+        persist(STORAGE_KEYS.WATCHLIST, updated);
+    };
+    const updateWatchlistItem = (id: string, field: keyof WatchlistItem, value: any) => {
+        const updated = watchlist.map(w => w.id === id ? { ...w, [field]: value } : w);
+        setWatchlist(updated);
+        persist(STORAGE_KEYS.WATCHLIST, updated);
+    };
+
+    // -- Cash Actions --
+    const addSalary = (account: string, amount: number) => {
+        const existingIndex = cashHoldings.findIndex(c => c.account.toLowerCase() === account.toLowerCase());
+        let updatedCashHoldings;
+        if (existingIndex >= 0) {
+            updatedCashHoldings = [...cashHoldings];
+            updatedCashHoldings[existingIndex] = {
+                ...updatedCashHoldings[existingIndex],
+                value: updatedCashHoldings[existingIndex].value + amount
+            };
+        } else {
+            updatedCashHoldings = [...cashHoldings, { id: Math.random().toString(36).substr(2, 9), account, value: amount }];
+        }
+        setCashHoldings(updatedCashHoldings);
+        persist(STORAGE_KEYS.CASH_HOLDINGS, updatedCashHoldings);
+    };
+
+    const updateCashHolding = (id: string, field: keyof CashHolding, value: any) => {
+        const updated = cashHoldings.map(c => c.id === id ? { ...c, [field]: value } : c);
+        setCashHoldings(updated);
+        persist(STORAGE_KEYS.CASH_HOLDINGS, updated);
+    };
+
+    const deleteCashHolding = (id: string) => {
+        const updated = cashHoldings.filter(c => c.id !== id);
+        setCashHoldings(updated);
+        persist(STORAGE_KEYS.CASH_HOLDINGS, updated);
+    };
+
+    // -- File Processing --
+    const processFile = (content: string, type: UploadType, marketDate?: string, isBackground: boolean = false) => {
+        let result: ParseResult<any> = { success: false, message: "No parser matched." };
+
+        if (context === 'MUTUAL_FUNDS') {
+             result = parseMutualFundCSV(content);
+             if (result.success && result.data) {
+                 setMfHoldings(result.data);
+                 persist(STORAGE_KEYS.MF_HOLDINGS, result.data);
+                 updateMeta({ market: new Date().toISOString() });
+             }
+        } else if (context === 'GOLD_ETF') {
+            result = parseGoldETFCSV(content);
+            if (result.success && result.data) {
+                setGoldHoldings(result.data);
+                persist(STORAGE_KEYS.GOLD_HOLDINGS, result.data);
+                updateMeta({ market: new Date().toISOString() });
+            }
+        } else {
+             // ... Existing generic parsing logic ...
+             const lines = content.split('\n').filter(line => line.trim() !== '');
+             setLastUploadPreview(lines.slice(0, 5).map(l => l.split(',')));
+
+             const firstLine = lines[0] || '';
+             const delimiter = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
+             const splitRegex = delimiter === ';' ? /;(?=(?:(?:[^"]*"){2})*[^"]*$)/ : /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
+             const rawRows = lines.map(line => line.split(splitRegex));
+
+            if (type === 'MARKET_DATA') {
+                result = parseMarketDataCSV(content);
+                if (result.success && result.data) {
+                    const updatedPrices = { ...priceData, ...result.data.prices };
+                    const updatedCurrencies = { ...assetCurrencies, ...result.data.currencies };
+                    setPriceData(updatedPrices);
+                    setAssetCurrencies(updatedCurrencies);
+                    persist(STORAGE_KEYS.PRICES, updatedPrices);
+                    persist(STORAGE_KEYS.PRICES + '_currencies', updatedCurrencies);
+                    updateMeta({ market: new Date().toISOString(), marketDate });
+                }
+            } else if (type === 'CURRENCY_RATES') {
+                result = parseCurrencyRatesCSV(content);
+                if (result.success && result.data) {
+                    const updatedRates = { ...currencyRates, ...result.data };
+                    setCurrencyRates(updatedRates);
+                    persist(STORAGE_KEYS.PRICES + '_rates', updatedRates);
+                }
+            } else if (context === 'INDIAN_EQUITY') {
+                result = parseIndianEquity(type, rawRows);
+                if (result.success && result.data) {
+                    if (type === 'TRADE_HISTORY') { 
+                        const deduplicated = (result.data as Trade[]).filter(newTrade => {
+                            return !baseTrades.some(baseTrade => 
+                                baseTrade.ticker === newTrade.ticker &&
+                                baseTrade.date === newTrade.date &&
+                                baseTrade.type === newTrade.type &&
+                                Math.abs(baseTrade.quantity - newTrade.quantity) < 0.001 &&
+                                Math.abs(baseTrade.price - newTrade.price) < 0.001
+                            );
+                        });
+                        setTrades(deduplicated); 
+                        persist(STORAGE_KEYS.TRADES, deduplicated); 
+                        updateMeta({ trades: new Date().toISOString() }); 
+                    }
+                    if (type === 'PNL') { setPnlData(result.data); persist(STORAGE_KEYS.PNL, result.data); updateMeta({ pnl: new Date().toISOString() }); }
+                    if (type === 'LEDGER') { setLedgerData(result.data); persist(STORAGE_KEYS.LEDGER, result.data); updateMeta({ ledger: new Date().toISOString() }); }
+                    if (type === 'DIVIDEND') { setDividendData(result.data); persist(STORAGE_KEYS.DIVIDENDS, result.data); updateMeta({ dividend: new Date().toISOString() }); }
+                }
+            } else if (context === 'INTERNATIONAL_EQUITY') {
+                result = parseInternationalEquity(type, rawRows);
+                if (result.success && result.data) {
+                    if (type === 'TRADE_HISTORY') { 
+                        const deduplicated = (result.data as Trade[]).filter(newTrade => {
+                            return !baseTrades.some(baseTrade => 
+                                baseTrade.ticker === newTrade.ticker &&
+                                baseTrade.date === newTrade.date &&
+                                baseTrade.type === newTrade.type &&
+                                Math.abs(baseTrade.quantity - newTrade.quantity) < 0.001 &&
+                                Math.abs(baseTrade.price - newTrade.price) < 0.001
+                            );
+                        });
+                        setTrades(deduplicated); 
+                        persist(STORAGE_KEYS.TRADES, deduplicated); 
+                        updateMeta({ trades: new Date().toISOString() }); 
+                    }
+                    if (type === 'LEDGER') { 
+                        setDividendData(result.data); 
+                        persist(STORAGE_KEYS.DIVIDENDS, result.data); 
+                        updateMeta({ dividend: new Date().toISOString(), ledger: new Date().toISOString() }); 
+                    }
+                    if (type === 'PORTFOLIO_SNAPSHOT') { 
+                        const updatedPortfolioPrices = { ...portfolioPrices, ...result.data.prices };
+                        const updatedPortfolioCurrencies = { ...portfolioCurrencies, ...result.data.currencies };
+                        const updatedPortfolioValues = { ...portfolioValues, ...result.data.values };
+                        setPortfolioPrices(updatedPortfolioPrices);
+                        setPortfolioCurrencies(updatedPortfolioCurrencies);
+                        setPortfolioValues(updatedPortfolioValues);
+                        persist(STORAGE_KEYS.PRICES + '_portfolio', updatedPortfolioPrices);
+                        persist(STORAGE_KEYS.PRICES + '_portfolio_currencies', updatedPortfolioCurrencies);
+                        persist(STORAGE_KEYS.PRICES + '_portfolio_values', updatedPortfolioValues);
+                        updateMeta({ portfolio: new Date().toISOString(), marketDate: new Date().toISOString().split('T')[0] });
+                    }
+                }
+            }
+        }
+
+        if (result.summary) updateSummary(result.summary);
+        
+        if (!isBackground) {
+            alert(result.message);
+        } else if (!result.success) {
+            console.warn("Background sync failed:", result.message);
+        }
+    };
+
+    // -- Metrics Calculation --
+    const metrics = useMemo(() => {
+        const referenceDate = new Date(globalMarketDate || new Date());
+
+        if (context === 'CASH_EQUIVALENTS') {
+            const totalCash = cashHoldings.reduce((acc, c) => acc + (c.value || 0), 0);
+            return {
+                totalInvested: totalCash,
+                currentValue: totalCash,
+                unrealizedPnL: 0,
+                grossRealizedPnL: 0,
+                netRealizedPnL: 0,
+                charges: 0,
+                totalDividends: 0,
+                cashBalance: totalCash,
+                xirr: 0,
+                holdings: cashHoldings,
+                hasLiveData: true,
+                tradePerformance: {}
+            };
+        }
+
+        if (context === 'MUTUAL_FUNDS') {
+             const totalInvested = mfHoldings.reduce((acc, h) => acc + h.invested, 0);
+             const currentValue = mfHoldings.reduce((acc, h) => acc + h.marketValue, 0);
+             const unrealizedPnL = currentValue - totalInvested;
+             const grossRealizedPnL = 0;
+             const netRealizedPnL = 0;
+             const charges = 0;
+             const totalDividends = 0;
+             const cashBalance = 0;
+             
+             // XIRR Calculation for MF
+             let xirr = 0;
+             const flows: { amount: number, date: Date }[] = [];
+             
+             const finalHoldings = mfHoldings.map(h => {
+                 let daysHeld = 0;
+                 if (h.latestBuyDate) {
+                     const buyDate = new Date(h.latestBuyDate);
+                     if (!isNaN(buyDate.getTime())) {
+                        const diff = referenceDate.getTime() - buyDate.getTime();
+                        daysHeld = Math.floor(diff / (1000 * 3600 * 24));
+                        if (daysHeld < 0) daysHeld = 0;
+                        
+                        // Add to flows for XIRR (Outflow is negative invested)
+                        if (h.invested > 0) {
+                             flows.push({ amount: -h.invested, date: buyDate });
+                        }
+                     }
+                 }
+                 
+                 return {
+                    ...h,
+                    unrealized: h.marketValue - h.invested,
+                    netReturnPct: h.invested > 0 ? ((h.marketValue - h.invested) / h.invested) * 100 : 0,
+                    portfolioPct: currentValue > 0 ? (h.marketValue / currentValue) * 100 : 0,
+                    daysHeld: isNaN(daysHeld) ? 0 : daysHeld,
+                    realized: 0
+                 };
+             }).sort((a, b) => b.portfolioPct - a.portfolioPct);
+
+             if (flows.length > 0 && currentValue > 0) {
+                 try {
+                     const val = calculateXIRR(flows, currentValue);
+                     if (!isNaN(val) && isFinite(val)) xirr = val * 100;
+                 } catch(e) { console.warn("XIRR error", e); }
+             }
+
+             return {
+                 totalInvested, currentValue, unrealizedPnL, grossRealizedPnL, netRealizedPnL,
+                 charges, totalDividends, cashBalance, xirr,
+                 holdings: finalHoldings,
+                 hasLiveData: mfHoldings.length > 0,
+                 tradePerformance: {}
+             };
+        }
+
+        if (context === 'GOLD_ETF') {
+            const totalInvested = goldHoldings.reduce((acc, h) => acc + h.invested, 0);
+            const currentValue = goldHoldings.reduce((acc, h) => acc + h.marketValue, 0);
+            const unrealizedPnL = currentValue - totalInvested;
+            const grossRealizedPnL = 0;
+            const netRealizedPnL = 0;
+            const charges = 0;
+            const totalDividends = 0;
+            const cashBalance = 0;
+            
+            // XIRR Calculation for Gold
+            let xirr = 0;
+            const flows: { amount: number, date: Date }[] = [];
+
+            const finalHoldings = goldHoldings.map(h => {
+                let daysHeld = 0;
+                if (h.latestBuyDate) {
+                    const buyDate = new Date(h.latestBuyDate);
+                    if (!isNaN(buyDate.getTime())) {
+                        const diff = referenceDate.getTime() - buyDate.getTime();
+                        daysHeld = Math.floor(diff / (1000 * 3600 * 24));
+                        if (daysHeld < 0) daysHeld = 0;
+                        
+                         // Add to flows for XIRR
+                        if (h.invested > 0) {
+                             flows.push({ amount: -h.invested, date: buyDate });
+                        }
+                    }
+                }
+
+                return {
+                    ...h,
+                    unrealized: h.marketValue - h.invested,
+                    netReturnPct: h.invested > 0 ? ((h.marketValue - h.invested) / h.invested) * 100 : 0,
+                    portfolioPct: currentValue > 0 ? (h.marketValue / currentValue) * 100 : 0,
+                    daysHeld: isNaN(daysHeld) ? 0 : daysHeld,
+                    realized: 0
+                };
+            }).sort((a, b) => b.portfolioPct - a.portfolioPct);
+
+             if (flows.length > 0 && currentValue > 0) {
+                 try {
+                     const val = calculateXIRR(flows, currentValue);
+                     if (!isNaN(val) && isFinite(val)) xirr = val * 100;
+                 } catch(e) { console.warn("XIRR error", e); }
+             }
+
+            return {
+                totalInvested, currentValue, unrealizedPnL, grossRealizedPnL, netRealizedPnL,
+                charges, totalDividends, cashBalance, xirr,
+                holdings: finalHoldings,
+                hasLiveData: goldHoldings.length > 0,
+                tradePerformance: {}
+            };
+       }
+
+        const allTrades = [...baseTrades, ...trades];
+        const { grossRealizedPnL: computedGrossPnL, totalInvested, holdings, tradePerformance } = calculateFIFO(allTrades);
+        
+        let charges = baseSummary.charges + (summary.charges || 0);
+        let grossRealizedPnL = computedGrossPnL;
+        let totalDividends = baseSummary.dividends + Math.max(dividendData.reduce((acc, curr) => acc + curr.amount, 0), summary.dividends || 0);
+        let cashBalance = summary.cash !== undefined ? summary.cash : 0;
+        if (ledgerData.length > 0 && summary.cash === undefined) {
+            const sorted = [...ledgerData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            if(sorted.length > 0) cashBalance = sorted[0].balance;
+        }
+
+        let totalUnrealizedPnL = 0;
+        let overriddenTotalInvested = 0;
+        
+        const portfolioHoldings = Object.entries(holdings)
+          .filter(([_, data]) => data.qty > 0)
+          .map(([ticker, data]) => {
+              const pnlRecord = pnlData.find(p => p.scripName.toLowerCase() === ticker.toLowerCase());
+              // Fix: Uppercase lookup to match parseMarketDataCSV storage
+              let livePrice = priceData[ticker.toUpperCase()]; 
+
+              if (livePrice === undefined && context === 'INTERNATIONAL_EQUITY') {
+                  const cleanTicker = ticker.toUpperCase();
+                  const priceKey = Object.keys(priceData).find(pk => {
+                      if (pk.length < 5) return false; 
+                      return cleanTicker.startsWith(pk) || pk.startsWith(cleanTicker) || cleanTicker.slice(0, 15) === pk.slice(0, 15);
+                  });
+                  if (priceKey) livePrice = priceData[priceKey];
+              }
+
+              let currentInvested = data.invested;
+              overriddenTotalInvested += currentInvested;
+
+              let unrealized = 0;
+              let marketValue = currentInvested; 
+              let isLive = false;
+
+              if (livePrice !== undefined) {
+                  marketValue = data.qty * livePrice;
+                  if (context === 'INTERNATIONAL_EQUITY') {
+                      const nativeCurrency = assetCurrencies[ticker.toUpperCase()];
+                      if (nativeCurrency && nativeCurrency !== 'EUR' && currencyRates[nativeCurrency]) {
+                          marketValue = marketValue * currencyRates[nativeCurrency];
+                      }
+                  }
+                  unrealized = marketValue - currentInvested;
+                  isLive = true;
+              } else if (pnlRecord) {
+                  unrealized = pnlRecord.unrealizedPnL;
+                  marketValue = currentInvested + unrealized;
+              }
+
+              totalUnrealizedPnL += unrealized;
+              const netReturnPct = currentInvested > 0 ? (unrealized / currentInvested) * 100 : 0;
+              let daysHeld = 0;
+              if (data.latestBuyDate) {
+                  const diffTime = Math.abs(referenceDate.getTime() - new Date(data.latestBuyDate).getTime());
+                  daysHeld = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              }
+
+              return {
+                  ticker, qty: data.qty, invested: currentInvested, unrealized, realized: data.realizedPnL,
+                  netReturnPct, marketValue, daysHeld: isNaN(daysHeld) ? 0 : daysHeld, isLive, portfolioPct: 0,
+                  latestBuyDate: data.latestBuyDate,
+                  latestBuyPrice: data.latestBuyPrice, // Pass through for UI
+                  livePrice: livePrice !== undefined ? livePrice : 0
+              };
+          });
+
+        const finalTotalInvested = context === 'INTERNATIONAL_EQUITY' ? overriddenTotalInvested : totalInvested;
+        const currentValue = finalTotalInvested + totalUnrealizedPnL + cashBalance;
+        const totalCapital = finalTotalInvested + cashBalance;
+        
+        // Realized P&L is now inclusive of charges and taxes directly from transactions
+        let netRealizedPnL = grossRealizedPnL;
+
+        let conversionRate = 90;
+        try {
+            const saved = localStorage.getItem('eur_to_inr_rate');
+            if (saved) conversionRate = parseFloat(saved);
+        } catch {}
+
+        const netAssetValue = calculateNetAssetValue();
+
+        const finalHoldings = portfolioHoldings.map(h => {
+            let pct = 0;
+            if (netAssetValue > 0) {
+                if (context === 'INTERNATIONAL_EQUITY') {
+                    pct = ((h.marketValue * conversionRate) / netAssetValue) * 100;
+                } else {
+                    pct = (h.marketValue / netAssetValue) * 100;
+                }
+            }
+            return { ...h, portfolioPct: pct };
+        });
+        
+        if (cashBalance > 0) {
+            let cashPct = 0;
+            if (netAssetValue > 0) {
+                if (context === 'INTERNATIONAL_EQUITY') {
+                    cashPct = ((cashBalance * conversionRate) / netAssetValue) * 100;
+                } else {
+                    cashPct = (cashBalance / netAssetValue) * 100;
+                }
+            }
+            finalHoldings.push({
+                ticker: 'CASH BALANCE', qty: 1, invested: cashBalance, unrealized: 0, realized: 0,
+                netReturnPct: 0, marketValue: cashBalance, daysHeld: 0, isLive: true,
+                portfolioPct: cashPct,
+                latestBuyDate: null,
+                latestBuyPrice: 0
+            });
+        }
+        finalHoldings.sort((a, b) => b.portfolioPct - a.portfolioPct);
+
+        let xirr = 0;
+        if (allTrades.length > 0) {
+             try {
+                const flows = allTrades.map(t => ({ amount: t.netAmount, date: new Date(t.date) }));
+                const val = calculateXIRR(flows, totalInvested + totalUnrealizedPnL);
+                
+                // --- DEBUG TRACE ---
+                if (context === 'INTERNATIONAL_EQUITY') {
+                    console.log('--- INTERNATIONAL EQUITY TRACE ---');
+                    console.log('flows:', flows);
+                    console.log('totalInvested:', totalInvested);
+                    console.log('finalTotalInvested:', finalTotalInvested);
+                    console.log('totalUnrealizedPnL:', totalUnrealizedPnL);
+                    console.log('terminalValue passed to XIRR:', totalInvested + totalUnrealizedPnL);
+                    console.log('XIRR output (raw):', val);
+                }
+
+                if (!isNaN(val) && isFinite(val)) xirr = val * 100;
+             } catch(e) {}
+        }
+
+        return {
+            totalInvested: finalTotalInvested, grossRealizedPnL, realizedPnL: grossRealizedPnL, unrealizedPnL: totalUnrealizedPnL,
+            charges, netRealizedPnL, totalDividends, cashBalance, currentValue, xirr,
+            holdings: finalHoldings,
+            hasLiveData: Object.keys(priceData).length > 0,
+            tradePerformance
+        };
+    }, [trades, pnlData, ledgerData, dividendData, priceData, assetCurrencies, currencyRates, portfolioValues, summary, context, mfHoldings, goldHoldings, cashHoldings, globalMarketDate, baseTrades, baseSummary]);
+
+    return {
+        trades, pnlData, ledgerData, dividendData, priceData, assetCurrencies, portfolioPrices, portfolioCurrencies, portfolioValues, watchlist, uploadMeta, sheetId,
+        metrics, lastUploadPreview, MUTUAL_FUND_SHEET_URL, GOLD_ETF_SHEET_URL, globalMarketDate,
+        baseTrades, baseSummary, convertToBaseData, clearBaseData,
+        processFile, clearAllData, addToWatchlist, removeFromWatchlist, updateWatchlistItem, updateMeta, saveSheetId, updateGlobalDate,
+        addSalary, updateCashHolding, deleteCashHolding, addTrade, updateTrade, deleteTrade
+    };
+};

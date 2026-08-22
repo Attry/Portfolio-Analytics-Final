@@ -1,0 +1,213 @@
+
+import React from 'react';
+import { useConsolidatedData } from '../../hooks/useConsolidatedData';
+import { useSnapshotData } from '../../hooks/useSnapshotData';
+import { PerformanceChart } from '../PerformanceChart';
+import { Wallet, TrendingUp, Landmark, PieChart as PieChartIcon, ArrowUpRight, ArrowDownRight, RefreshCw, Gem } from 'lucide-react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { CartoonBackground } from '../CartoonBackground';
+
+export const NetWorthView: React.FC = () => {
+    const { 
+        netAssetValue, 
+        netCash, 
+        netReturnAbs, 
+        netReturnPct, 
+        allocations, 
+        isLoading, 
+        conversionRate,
+        totalCapitalBase,
+        xirr,
+        fixedEurRate,
+        updateFixedEurRate
+    } = useConsolidatedData();
+
+    const {
+        snapshots,
+    } = useSnapshotData('CONSOLIDATED', netAssetValue, totalCapitalBase || 0, xirr || 0);
+
+    if (isLoading) {
+        return (
+            <div className="flex h-full items-center justify-center">
+                <div className="flex flex-col items-center gap-4">
+                    <RefreshCw className="w-8 h-8 text-primary animate-spin" />
+                    <p className="text-gray-400">Consolidating Assets...</p>
+                </div>
+            </div>
+        );
+    }
+
+    const formatCurrency = (val: number) => {
+        const absVal = Math.abs(val);
+        const formatted = absVal.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+        return val < 0 ? `-₹${formatted}` : `₹${formatted}`;
+    };
+    
+    // Ensure % is a valid number for display
+    const displayPct = isNaN(netReturnPct) ? 0 : netReturnPct;
+
+    return (
+        <div className="space-y-8 animate-fade-in pb-20 relative">
+             <CartoonBackground icon={Gem} pattern="grid" color="text-accent-pink" opacity="opacity-[0.03]" />
+             {/* Header */}
+             <div className="flex justify-between items-end border-b-2 border-gray-200 pb-4 relative z-10">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight flex items-center gap-3">
+                        <Landmark className="text-accent-cyan" size={32} />
+                        Net Worth Overview
+                    </h1>
+                    <p className="text-gray-600 mt-2">Consolidated view of all asset classes</p>
+                </div>
+                <div className="flex gap-6 text-right items-end">
+                    <div>
+                        <p className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Current EUR/INR</p>
+                        <p className="text-[19px] font-bold text-accent-cyan font-sans tracking-tight">₹{conversionRate.toFixed(2)}</p>
+                    </div>
+                    <div>
+                        <p className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Avg EUR Buy Price</p>
+                        <div className="flex items-center justify-end font-sans">
+                            <span className="text-[19px] font-bold text-accent-pink tracking-tight mr-1">₹</span>
+                            <input 
+                                type="number" 
+                                step="0.01" 
+                                value={fixedEurRate} 
+                                onChange={(e) => updateFixedEurRate(parseFloat(e.target.value) || 0)}
+                                className="w-[80px] text-right bg-transparent text-[19px] font-bold text-accent-pink tracking-tight focus:outline-none focus:border-b border-accent-pink border-dashed"
+                            />
+                        </div>
+                    </div>
+                </div>
+             </div>
+
+             {/* Key Metrics Grid */}
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                 {/* NAV */}
+                 <div className="glass-card rounded-2xl p-6 relative overflow-hidden group border border-gray-200 shadow-md hover:shadow-lg transition-all">
+                     <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-transparent opacity-50"></div>
+                     <div className="relative z-10">
+                        <p className="text-xs font-bold text-gray-600 uppercase tracking-wider">Net Asset Value</p>
+                        <h2 className="text-3xl font-bold text-gray-900 mt-2">{formatCurrency(netAssetValue)}</h2>
+                        <div className="mt-4 flex items-center text-xs text-gray-600 gap-1">
+                            <Wallet size={14} /> Total Portfolio Value
+                        </div>
+                     </div>
+                 </div>
+
+                 {/* Net Cash */}
+                 <div className="glass-card rounded-2xl p-6 relative overflow-hidden border border-gray-200 shadow-md hover:shadow-lg transition-all">
+                     <div className="relative z-10">
+                        <p className="text-xs font-bold text-gray-600 uppercase tracking-wider">Net Cash</p>
+                        <h2 className="text-3xl font-bold text-success mt-2">{formatCurrency(netCash)}</h2>
+                        <div className="mt-4 flex items-center text-xs text-gray-600 gap-1">
+                            <Landmark size={14} /> Available Liquidity
+                        </div>
+                     </div>
+                 </div>
+
+                 {/* Net Returns % */}
+                 <div className="glass-card rounded-2xl p-6 relative overflow-hidden border border-gray-200 shadow-md hover:shadow-lg transition-all">
+                     <div className="relative z-10">
+                        <p className="text-xs font-bold text-gray-600 uppercase tracking-wider">Net Returns (%)</p>
+                        <div className="flex items-end gap-2 mt-2">
+                             <h2 className={`text-3xl font-bold ${displayPct >= 0 ? 'text-accent-cyan' : 'text-danger'}`}>
+                                 {displayPct >= 0 ? '+' : ''}{displayPct.toFixed(2)}%
+                             </h2>
+                             {displayPct >= 0 ? <ArrowUpRight className="text-accent-cyan mb-1" /> : <ArrowDownRight className="text-danger mb-1" />}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-4">of Net Deposits</p>
+                     </div>
+                 </div>
+
+                 {/* Net Returns Abs */}
+                 <div className="glass-card rounded-2xl p-6 relative overflow-hidden border border-gray-200 shadow-md hover:shadow-lg transition-all">
+                     <div className="relative z-10">
+                        <p className="text-xs font-bold text-gray-600 uppercase tracking-wider">Net Returns (Abs)</p>
+                        <h2 className={`text-3xl font-bold mt-2 ${netReturnAbs >= 0 ? 'text-accent-cyan' : 'text-danger'}`}>
+                             {netReturnAbs >= 0 ? '+' : ''}{formatCurrency(netReturnAbs)}
+                        </h2>
+                        <div className="mt-4 flex items-center text-xs text-gray-600 gap-1">
+                            <TrendingUp size={14} /> Total P&L
+                        </div>
+                     </div>
+                 </div>
+             </div>
+
+             {/* Performance Chart Section */}
+             <PerformanceChart
+                 snapshots={snapshots}
+                 netAssetValue={netAssetValue}
+                 totalInvested={totalCapitalBase}
+                 currentXirr={xirr}
+                 currencySymbol="₹"
+                 contextName="Consolidated"
+             />
+
+             {/* Allocation Section */}
+             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                 {/* Chart */}
+                 <div className="glass-card rounded-2xl p-8 lg:col-span-2 border border-gray-200 flex flex-col shadow-md">
+                    <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+                        <PieChartIcon className="w-5 h-5 text-primary" /> Asset Allocation
+                    </h3>
+                    <div className="flex-1 min-h-[300px] relative">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={allocations}
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={80}
+                                    outerRadius={120}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {allocations.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                    ))}
+                                </Pie>
+                                <Tooltip 
+                                    contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0', borderWidth: '1px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                    itemStyle={{ color: '#1e293b', fontWeight: '500' }}
+                                    formatter={(value: number, name: string) => [
+                                        `${formatCurrency(value)} (${((value / netAssetValue) * 100).toFixed(2)}%)`, 
+                                        name
+                                    ]}
+                                />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                 </div>
+
+                 {/* Allocation Details */}
+                 <div className="glass-card rounded-2xl p-6 border border-gray-200 shadow-md">
+                    <h3 className="text-lg font-bold text-gray-900 mb-6">Breakdown</h3>
+                    <div className="space-y-4">
+                        {allocations.map((item) => {
+                            const pct = netAssetValue > 0 ? (item.value / netAssetValue) * 100 : 0;
+                            return (
+                                <div key={item.name} className="p-4 bg-white rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors shadow-sm">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-3 h-3 rounded-full border border-gray-200" style={{ backgroundColor: item.color }}></div>
+                                            <span className="text-sm font-medium text-gray-700">{item.name}</span>
+                                        </div>
+                                        <span className="text-sm font-bold text-gray-900">{pct.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden border border-gray-200">
+                                        <div 
+                                            className="h-full rounded-full transition-all duration-1000" 
+                                            style={{ width: `${pct}%`, backgroundColor: item.color }}
+                                        ></div>
+                                    </div>
+                                    <p className="text-right text-[13px] text-gray-600 mt-2 font-sans tracking-tight font-medium">
+                                        {formatCurrency(item.value)}
+                                    </p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                 </div>
+             </div>
+        </div>
+    );
+};

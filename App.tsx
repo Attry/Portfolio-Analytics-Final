@@ -1,0 +1,308 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Sidebar } from './components/Sidebar';
+import { ViewState, AssetContext } from './types';
+import { 
+  RefreshCw, 
+  Calendar, 
+  WalletCards, 
+  Menu 
+} from 'lucide-react';
+
+// View Components
+import { DashboardView } from './components/views/DashboardView';
+import { HoldingsView } from './components/views/HoldingsView';
+import { TransactionsView } from './components/views/TransactionsView';
+import { WatchlistView } from './components/views/WatchlistView';
+import { AIInsightsView } from './components/views/AIInsightsView';
+import { UploadView } from './components/views/UploadView';
+import { NetWorthView } from './components/views/NetWorthView';
+import { DecisionArenaView } from './components/views/DecisionArenaView';
+import { TopBookmark } from './components/TopBookmark';
+
+// Hooks
+import { usePortfolioData } from './hooks/usePortfolioData';
+
+const toTitleCase = (str: string) => {
+  return str.toLowerCase().split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+};
+
+const PortfolioDashboard: React.FC<{ context: AssetContext, currentView: ViewState, setView: (view: ViewState) => void }> = ({ context, currentView, setView }) => {
+  const currencySymbol = context === 'INTERNATIONAL_EQUITY' ? '€' : '₹';
+  
+  const {
+      trades, metrics, watchlist, priceData, assetCurrencies, portfolioPrices, portfolioCurrencies, portfolioValues, uploadMeta, sheetId, MUTUAL_FUND_SHEET_URL, GOLD_ETF_SHEET_URL, globalMarketDate,
+      baseTrades, baseSummary, convertToBaseData, clearBaseData,
+      processFile, addToWatchlist, removeFromWatchlist, updateWatchlistItem, saveSheetId, updateGlobalDate,
+      addSalary, updateCashHolding, deleteCashHolding, addTrade, updateTrade, deleteTrade
+  } = usePortfolioData(context);
+
+  const [isFetchingSheet, setIsFetchingSheet] = useState(false);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  // -- Google Sheet Sync --
+  const handleGoogleSheetFetch = async (isBackground = false) => {
+    setIsFetchingSheet(true);
+    try {
+        let url = '';
+        if (context === 'MUTUAL_FUNDS') {
+             url = MUTUAL_FUND_SHEET_URL;
+        } else if (context === 'GOLD_ETF') {
+             url = GOLD_ETF_SHEET_URL;
+        } else {
+            if (!sheetId || !globalMarketDate) { 
+                if (!isBackground) alert("Please provide both Sheet ID and Market Date."); 
+                setIsFetchingSheet(false); 
+                return; 
+            }
+            url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText || 'Unknown Error'}`);
+        const csvText = await response.text();
+        if (csvText.toLowerCase().includes('<!doctype html>')) throw new Error("Access denied. Publish sheet to web.");
+        
+        // Use the hook's processor
+        processFile(csvText, 'MARKET_DATA', globalMarketDate, isBackground);
+
+        if (context === 'INTERNATIONAL_EQUITY') {
+            try {
+                const curUrl = `https://docs.google.com/spreadsheets/d/1Dwd4qJqOWsTdvbzDEV269Mg62slqFP6eUEFTZh1vnp8/gviz/tq?tqx=out:csv`;
+                const curResponse = await fetch(curUrl);
+                if (curResponse.ok) {
+                    const curCsv = await curResponse.text();
+                    processFile(curCsv, 'CURRENCY_RATES', globalMarketDate, isBackground);
+                }
+            } catch (curError) {
+                console.warn("Failed to fetch currency rates:", curError);
+            }
+        }
+    } catch (error: any) {
+        console.warn(error);
+        if (!isBackground) alert(`Failed to fetch data: ${error.message}`);
+    } finally {
+        setIsFetchingSheet(false);
+    }
+  };
+
+  // Auto-sync effect
+  useEffect(() => {
+    const timer = setTimeout(() => {
+        if (context === 'MUTUAL_FUNDS' || context === 'GOLD_ETF' || (sheetId && globalMarketDate && Object.keys(priceData).length === 0)) {
+             handleGoogleSheetFetch(true);
+        }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [sheetId, context]); 
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>, type: any) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (type === 'MARKET_DATA' && !globalMarketDate && context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF') {
+        alert("Please set the Reference Date in the header before uploading.");
+        event.target.value = '';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (content) processFile(content, type, globalMarketDate);
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  if (currentView === ViewState.NET_WORTH) {
+      return (
+          <div className="p-6 h-full overflow-y-auto custom-scrollbar">
+              <NetWorthView />
+          </div>
+      );
+  }
+
+  return (
+    <div className="p-2 md:p-6 space-y-4 md:space-y-6 overflow-y-auto h-full pb-24 relative z-10 custom-scrollbar">
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 md:mb-8 gap-4 md:gap-0">
+            <div>
+                <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-normal">{toTitleCase(context)}</h2>
+            </div>
+            
+            <div className="flex flex-col-reverse md:flex-row items-center gap-4 w-full md:w-auto">
+                 {/* Ref Date Button - Only on Dashboard */}
+                 {currentView === ViewState.DASHBOARD && (
+                     <div className="relative group w-full md:w-auto">
+                        <div 
+                            className="flex items-center justify-center gap-3 bg-white border border-gray-200 rounded-xl px-5 py-2.5 shadow-md border border-gray-200 hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none transition-all cursor-pointer w-full md:w-auto" 
+                            onClick={() => dateInputRef.current?.showPicker()}
+                        >
+                            <Calendar className="w-4 h-4 text-primary group-hover:text-primary-dim" />
+                            <span className="text-sm font-bold text-gray-900 font-sans tracking-tight text-[15px] tracking-wide">
+                                {globalMarketDate || 'Select Date'}
+                            </span>
+                        </div>
+                        <input 
+                            ref={dateInputRef}
+                            type="date"
+                            value={globalMarketDate}
+                            onChange={(e) => updateGlobalDate(e.target.value)}
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                        />
+                     </div>
+                 )}
+
+                 {/* Status & Sync */}
+                 <div className="flex items-center justify-between w-full md:w-auto gap-4">
+                    <div className="text-left md:ml-2">
+                        <p className="text-[10px] md:text-xs text-gray-600 font-medium">Market Data</p>
+                        <p className={`text-xs font-bold ${metrics.hasLiveData ? 'text-success' : 'text-warning'}`}>
+                            {metrics.hasLiveData ? 'LIVE' : 'OFFLINE'}
+                        </p>
+                    </div>
+                    <button onClick={() => handleGoogleSheetFetch(false)} className="p-2.5 bg-white hover:bg-gray-50 rounded-xl border border-gray-200 transition-all shadow-md border border-gray-200 hover:shadow-lg transition-all" title="Sync Market Data">
+                        <RefreshCw size={18} className={`text-primary ${isFetchingSheet ? 'animate-spin' : ''}`} />
+                    </button>
+                 </div>
+            </div>
+        </div>
+
+        {currentView === ViewState.DASHBOARD && <DashboardView metrics={metrics} currencySymbol={currencySymbol} context={context} onAddSalary={addSalary} />}
+        {currentView === ViewState.HOLDINGS && <HoldingsView metrics={metrics} currencySymbol={currencySymbol} context={context} onUpdateHolding={updateCashHolding} onDeleteHolding={deleteCashHolding} assetCurrencies={assetCurrencies} portfolioPrices={portfolioPrices} portfolioCurrencies={portfolioCurrencies} portfolioValues={portfolioValues} />}
+        
+        {/* Render restricted views only if not Mutual Funds/Gold ETF/Cash (just extra safety, sidebar handles nav) */}
+        {context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF' && context !== 'CASH_EQUIVALENTS' && currentView === ViewState.TRANSACTIONS && (
+            <TransactionsView 
+                trades={trades} 
+                baseTrades={baseTrades}
+                metrics={metrics} 
+                currencySymbol={currencySymbol} 
+                onAddTrade={addTrade} 
+                onUpdateTrade={updateTrade}
+                onDeleteTrade={deleteTrade}
+                onConvertToBase={convertToBaseData}
+                onClearBase={clearBaseData}
+                baseSummary={baseSummary}
+                priceData={priceData}
+            />
+        )}
+        {context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF' && context !== 'CASH_EQUIVALENTS' && currentView === ViewState.WATCHLIST && (
+            <WatchlistView 
+                watchlist={watchlist} 
+                priceData={priceData}
+                assetCurrencies={assetCurrencies}
+                currencySymbol={currencySymbol}
+                context={context}
+                onAdd={addToWatchlist}
+                onRemove={removeFromWatchlist}
+                onUpdate={updateWatchlistItem}
+            />
+        )}
+        {/* Decision Arena */}
+        {context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF' && context !== 'CASH_EQUIVALENTS' && currentView === ViewState.DECISION_ARENA && (
+            <DecisionArenaView 
+                metrics={metrics}
+                watchlist={watchlist}
+                priceData={priceData}
+                assetCurrencies={assetCurrencies}
+                portfolioPrices={portfolioPrices}
+                portfolioCurrencies={portfolioCurrencies}
+                currencySymbol={currencySymbol}
+                context={context}
+                onUpdateWatchlist={updateWatchlistItem}
+                onAddToWatchlist={addToWatchlist}
+            />
+        )}
+
+        {/* AI Insights relies on trades, so hidden for MF/Gold/Cash */}
+        {context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF' && context !== 'CASH_EQUIVALENTS' && currentView === ViewState.AI_INSIGHTS && <AIInsightsView trades={trades} />}
+        {context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF' && context !== 'CASH_EQUIVALENTS' && currentView === ViewState.UPLOAD && (
+            <UploadView 
+                context={context} 
+                uploadMeta={uploadMeta} 
+                marketDate={globalMarketDate} 
+                setMarketDate={updateGlobalDate}
+                sheetId={sheetId}
+                setSheetId={saveSheetId}
+                onFileUpload={handleFileUpload}
+                onSync={() => handleGoogleSheetFetch(false)}
+                isSyncing={isFetchingSheet}
+                baseTrades={baseTrades}
+                baseSummary={baseSummary}
+                onConvertToBase={convertToBaseData}
+                onClearBase={clearBaseData}
+            />
+        )}
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  const [view, setView] = useState<ViewState>(ViewState.DASHBOARD);
+  const [context, setContext] = useState<AssetContext>('INDIAN_EQUITY');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Determine Theme Class
+  const themeClass = useMemo(() => {
+      if (view === ViewState.NET_WORTH) return 'theme-networth';
+      
+      switch (context) {
+          case 'MUTUAL_FUNDS': return 'theme-corporate';
+          case 'GOLD_ETF': return 'theme-gold';
+          case 'INTERNATIONAL_EQUITY': return 'theme-intl';
+          case 'CASH_EQUIVALENTS': return 'theme-cash';
+          case 'INDIAN_EQUITY': 
+          default: return ''; // Default theme (defined in root)
+      }
+  }, [context, view]);
+
+  // Check if current view triggers sidebar auto-hide (Desktop Only)
+  const autoHideViews = [ViewState.HOLDINGS, ViewState.WATCHLIST, ViewState.TRANSACTIONS, ViewState.AI_INSIGHTS, ViewState.DECISION_ARENA];
+  const isAutoHide = autoHideViews.includes(view);
+
+  return (
+    <div className={`flex h-screen bg-background text-gray-900 font-sans selection:bg-primary/30 ${themeClass}`}>
+        <Sidebar 
+            currentView={view} 
+            setView={setView} 
+            currentContext={context} 
+            setContext={setContext}
+            mobileOpen={isMobileMenuOpen}
+            setMobileOpen={setIsMobileMenuOpen}
+        />
+
+        <TopBookmark />
+
+        {/* Mobile Header */}
+        <div className="md:hidden fixed top-0 left-0 w-full z-40 bg-background/90 backdrop-blur-md border-b-2 border-gray-200 p-4 flex justify-between items-center h-16 shadow-lg">
+             <div className="flex items-center gap-3">
+                <div className="bg-primary/20 p-1.5 rounded-lg border border-gray-200"><WalletCards className="w-5 h-5 text-primary" /></div>
+                <span className="font-bold text-lg text-gray-900 tracking-wide">Fin<span className="text-primary">Folio</span></span>
+             </div>
+             <button 
+                onClick={() => setIsMobileMenuOpen(true)} 
+                className="p-2 text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg active:scale-95 transition-all shadow-sm border border-gray-200"
+             >
+                <Menu size={24} />
+             </button>
+        </div>
+
+        {/* Main Content Area */}
+        <main className={`flex-1 relative transition-all duration-500 ease-in-out 
+            ${isAutoHide ? 'md:ml-6' : 'md:ml-64'} 
+            ml-0 pt-16 md:pt-0 h-screen overflow-hidden
+        `}>
+            {/* Fixed Background Layer to prevent disappearing on scroll */}
+            <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+                <div className="absolute top-[-10%] right-[-5%] w-[600px] h-[600px] bg-primary/10 rounded-full blur-[120px] animate-blob"></div>
+                <div className="absolute bottom-[-10%] left-[10%] w-[500px] h-[500px] bg-accent-cyan/5 rounded-full blur-[100px]"></div>
+            </div>
+
+            <div className="relative z-10 h-full">
+                <PortfolioDashboard key={context} context={context} currentView={view} setView={setView} />
+            </div>
+        </main>
+    </div>
+  );
+};
+
+export default App;

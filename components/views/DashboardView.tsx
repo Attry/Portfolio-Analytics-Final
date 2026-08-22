@@ -1,0 +1,351 @@
+
+import React, { useMemo, useState } from 'react';
+import { Wallet, Briefcase, TrendingUp, Activity, PieChart as PieChartIcon, BarChart3, Layers, Plus, Coins, X, Landmark } from 'lucide-react';
+import { StatsCard } from '../StatsCard';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { AssetContext } from '../../types';
+import { CartoonBackground } from '../CartoonBackground';
+import { useSnapshotData } from '../../hooks/useSnapshotData';
+import { PerformanceChart } from '../PerformanceChart';
+
+const COLORS = ['#7042f8', '#00e5ff', '#ff2975', '#00ffa3', '#facc15', '#fb923c', '#a855f7'];
+
+interface DashboardViewProps {
+  metrics: any;
+  currencySymbol: string;
+  context: AssetContext;
+  onAddSalary?: (account: string, amount: number) => void;
+}
+
+import { getTrueInvested, getNetReturns } from '../../utils/financials';
+
+export const DashboardView: React.FC<DashboardViewProps> = ({ metrics, currencySymbol, context, onAddSalary }) => {
+    const [isSalaryModalOpen, setIsSalaryModalOpen] = useState(false);
+    const [salaryAccount, setSalaryAccount] = useState('');
+    const [salaryAmount, setSalaryAmount] = useState('');
+
+    const snapshotVal = metrics.currentValue;
+    const snapshotInvested = getTrueInvested(metrics, context);
+    const snapshotXirr = metrics.xirr;
+
+    const {
+        snapshots,
+    } = useSnapshotData(context, snapshotVal, snapshotInvested, snapshotXirr);
+
+    const contextName = useMemo(() => {
+        switch (context) {
+            case 'INDIAN_EQUITY': return 'Indian Equity';
+            case 'INTERNATIONAL_EQUITY': return 'International Equity';
+            case 'MUTUAL_FUNDS': return 'Mutual Funds';
+            case 'GOLD_ETF': return 'Gold ETF';
+            case 'CASH_EQUIVALENTS': return 'Cash Equivalents';
+            default: return 'Asset Class';
+        }
+    }, [context]);
+
+    const handleAddSalary = () => {
+        if (!salaryAccount || !salaryAmount || !onAddSalary) return;
+        onAddSalary(salaryAccount, parseFloat(salaryAmount));
+        setIsSalaryModalOpen(false);
+        setSalaryAccount('');
+        setSalaryAmount('');
+    };
+
+    const netTotalReturns = getNetReturns(metrics, context);
+    
+    // Calculate accurate Net ROI using the true Net Deposits
+    const netROI = snapshotInvested > 0 ? (netTotalReturns / snapshotInvested) * 100 : 0;
+
+    const displayReturnPct = (context === 'MUTUAL_FUNDS' || context === 'GOLD_ETF')
+        ? (snapshotInvested > 0 ? (metrics.unrealizedPnL / snapshotInvested) * 100 : 0)
+        : netROI; // Use Net Return (with Cash) for the main Current Value card
+    
+    const tickerDistribution = useMemo(() => {
+        if (metrics.holdings.length > 0) {
+            return metrics.holdings
+                .map((h: any) => ({ name: h.ticker || h.account, value: h.marketValue || h.value || 0 }))
+                .sort((a: any, b: any) => b.value - a.value);
+        }
+        return [];
+    }, [metrics.holdings]);
+
+    const diversificationCount = useMemo(() => {
+        return metrics.holdings.filter((h: any) => h.ticker !== 'CASH BALANCE').length;
+    }, [metrics.holdings]);
+
+    // Simplified view for Gold ETF
+    if (context === 'GOLD_ETF') {
+        return (
+            <div className="space-y-6 animate-fade-in">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatsCard 
+                        title="Current Value" 
+                        value={`${currencySymbol}${metrics.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                        icon={<Wallet />}
+                        change={`${displayReturnPct.toFixed(2)}%`}
+                        changeLabel="Net Return"
+                        isPositive={displayReturnPct >= 0}
+                    />
+                    <StatsCard 
+                        title="Total Invested" 
+                        value={`${currencySymbol}${snapshotInvested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                        icon={<Briefcase />} 
+                    />
+                    <StatsCard 
+                        title="Unrealized P&L" 
+                        value={`${metrics.unrealizedPnL >= 0 ? '+' : '-'}${currencySymbol}${Math.abs(metrics.unrealizedPnL).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                        icon={<TrendingUp />} 
+                        isPositive={metrics.unrealizedPnL >= 0}
+                    />
+                     <StatsCard 
+                        title="XIRR" 
+                        value={`${metrics.xirr.toFixed(2)}%`} 
+                        icon={<Activity />} 
+                        isPositive={metrics.xirr >= 0}
+                    />
+                </div>
+                <div className="mt-6">
+                    <PerformanceChart totalInvested={snapshotInvested} currentXirr={snapshotXirr}
+                        snapshots={snapshots}
+                        netAssetValue={metrics.currentValue}
+                        currencySymbol={currencySymbol}
+                        contextName={contextName}
+                    />
+                </div>
+            </div>
+        );
+    }
+
+    // Cash Equivalents View
+    if (context === 'CASH_EQUIVALENTS') {
+        // Collect existing accounts for datalist
+        const accounts = Array.from(new Set(metrics.holdings.map((h:any) => h.account)));
+
+        return (
+            <div className="space-y-6 animate-fade-in relative">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2">
+                        <div className="glass-card rounded-2xl p-8 flex items-center justify-between border border-gray-200 relative overflow-hidden shadow-md">
+                             <div className="absolute inset-0 bg-gradient-to-r from-success/10 to-transparent pointer-events-none"></div>
+                             <div>
+                                 <p className="text-sm font-semibold text-gray-600 uppercase tracking-wider mb-2">Total Cash Value</p>
+                                 <h1 className="text-5xl font-bold text-gray-900 tracking-tight">{currencySymbol}{metrics.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h1>
+                             </div>
+                             <div className="p-4 bg-success/10 rounded-2xl border-2 border-success/20">
+                                 <Coins className="w-10 h-10 text-success" />
+                             </div>
+                        </div>
+                    </div>
+                    
+                    <div className="flex flex-col justify-center">
+                        <button 
+                            onClick={() => setIsSalaryModalOpen(true)}
+                            className="w-full py-6 bg-primary hover:bg-primary-glow text-white rounded-2xl font-bold text-lg transition-all shadow-md border border-gray-200 hover:shadow-lg flex items-center justify-center gap-3"
+                        >
+                            <Plus className="w-6 h-6" /> Add Salary
+                        </button>
+                    </div>
+                </div>
+
+                {/* Salary Modal */}
+                {isSalaryModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm animate-fade-in p-4">
+                        <div className="bg-white border border-gray-200 rounded-2xl p-6 w-full max-w-md shadow-xl relative">
+                            <button 
+                                onClick={() => setIsSalaryModalOpen(false)}
+                                className="absolute top-4 right-4 text-gray-600 hover:text-gray-900"
+                            >
+                                <X size={20} />
+                            </button>
+                            <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                                <Plus className="w-5 h-5 text-success" /> Add to Cash
+                            </h3>
+                            
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">Account Name</label>
+                                    <input 
+                                        list="accounts" 
+                                        type="text" 
+                                        value={salaryAccount}
+                                        onChange={(e) => setSalaryAccount(e.target.value)}
+                                        placeholder="e.g. HDFC Salary, Savings..."
+                                        className="w-full bg-white border border-gray-200 rounded-xl p-3 text-gray-900 focus:outline-none focus:border-primary transition-colors shadow-sm focus:shadow-none focus:translate-x-[2px] focus:translate-y-[2px]"
+                                    />
+                                    <datalist id="accounts">
+                                        {accounts.map((acc: any) => <option key={acc} value={acc} />)}
+                                    </datalist>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">Amount ({currencySymbol})</label>
+                                    <input 
+                                        type="number" 
+                                        value={salaryAmount}
+                                        onChange={(e) => setSalaryAmount(e.target.value)}
+                                        placeholder="0.00"
+                                        className="w-full bg-white border border-gray-200 rounded-xl p-3 text-gray-900 focus:outline-none focus:border-primary transition-colors text-[19px] shadow-sm focus:shadow-none focus:translate-x-[2px] focus:translate-y-[2px] font-sans tracking-tight font-medium"
+                                    />
+                                </div>
+                                <button 
+                                    onClick={handleAddSalary}
+                                    className="w-full py-3 bg-success text-white border border-gray-200 rounded-xl font-bold mt-2 transition-all shadow-md hover:shadow-lg"
+                                >
+                                    Confirm Add
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                <div className="mt-6">
+                    <PerformanceChart totalInvested={snapshotInvested} currentXirr={snapshotXirr}
+                        snapshots={snapshots}
+                        netAssetValue={metrics.currentValue}
+                        currencySymbol={currencySymbol}
+                        contextName={contextName}
+                    />
+                </div>
+            </div>
+        );
+    }
+
+    const isEquityContext = context === 'INDIAN_EQUITY' || context === 'INTERNATIONAL_EQUITY';
+
+    return (
+        <div className="space-y-6 animate-fade-in relative">
+            <CartoonBackground icon={PieChartIcon} pattern="dots" color="text-primary" opacity="opacity-[0.03]" />
+            <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 ${isEquityContext ? 'xl:grid-cols-6' : 'xl:grid-cols-5'} gap-4 relative z-10`}>
+                <StatsCard 
+                    title="Current Value" 
+                    value={`${currencySymbol}${metrics.currentValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                    icon={<Wallet />}
+                    change={`${displayReturnPct.toFixed(2)}%`}
+                    changeLabel="Net Return"
+                    isPositive={displayReturnPct >= 0}
+                />
+                <StatsCard 
+                    title="Total Invested" 
+                    value={`${currencySymbol}${snapshotInvested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                    icon={<Briefcase />} 
+                />
+                
+                {/* Net Absolute Return - Only for Equity Contexts */}
+                {isEquityContext && (
+                    <StatsCard 
+                        title="Net Absolute Return" 
+                        value={`${netTotalReturns >= 0 ? '+' : '-'}${currencySymbol}${Math.abs(netTotalReturns).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                        icon={<Coins />} 
+                        isPositive={netTotalReturns >= 0}
+                        change={`${netROI.toFixed(2)}%`}
+                        changeLabel="Net ROI"
+                    />
+                )}
+
+                <StatsCard 
+                    title="Unrealized P&L" 
+                    value={`${metrics.unrealizedPnL >= 0 ? '+' : '-'}${currencySymbol}${Math.abs(metrics.unrealizedPnL).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                    icon={<TrendingUp />} 
+                    isPositive={metrics.unrealizedPnL >= 0}
+                />
+                <StatsCard 
+                    title="XIRR" 
+                    value={`${metrics.xirr.toFixed(2)}%`} 
+                    icon={<Activity />} 
+                    isPositive={metrics.xirr >= 0}
+                />
+                <StatsCard 
+                    title="Diversification" 
+                    value={`${diversificationCount}`} 
+                    icon={<Layers />} 
+                    changeLabel={context === 'MUTUAL_FUNDS' ? "Funds" : "Stocks"}
+                />
+            </div>
+
+            <PerformanceChart totalInvested={snapshotInvested} currentXirr={snapshotXirr}
+                snapshots={snapshots}
+                netAssetValue={metrics.currentValue}
+                currencySymbol={currencySymbol}
+                contextName={contextName}
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Allocation Chart */}
+                <div className="glass-card rounded-2xl p-6 lg:col-span-1 border border-gray-200 shadow-md">
+                    <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+                        <PieChartIcon className="w-5 h-5 text-accent-cyan" /> Allocation
+                    </h3>
+                    <div className="h-[300px] flex items-center justify-center">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={tickerDistribution}
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={60}
+                                    outerRadius={80}
+                                    paddingAngle={5}
+                                    dataKey="value"
+                                >
+                                    {tickerDistribution.map((entry: any, index: number) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip 
+                                    contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0', borderWidth: '1px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                    itemStyle={{ color: '#1e293b', fontWeight: '500' }}
+                                    formatter={(value: number, name: any) => {
+                                        const percent = metrics.currentValue > 0 ? (value / metrics.currentValue) * 100 : 0;
+                                        // The second argument in the return array is the label displayed in the tooltip
+                                        return [`${currencySymbol}${value.toLocaleString()} (${percent.toFixed(2)}%)`, name];
+                                    }}
+                                />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* Summary Stats - Only show for Equities */}
+                {context !== 'MUTUAL_FUNDS' && (
+                    <div className="glass-card rounded-2xl p-6 lg:col-span-2 border border-gray-200 shadow-md">
+                            <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
+                            <BarChart3 className="w-5 h-5 text-primary" /> Performance Summary
+                        </h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                            {context !== 'INTERNATIONAL_EQUITY' && (
+                            <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-sm">
+                                <p className="text-xs text-gray-600 uppercase tracking-wider font-bold">Realized P&L</p>
+                                <p className={`text-xl font-bold mt-1 ${metrics.netRealizedPnL >= 0 ? 'text-success' : 'text-danger'}`}>
+                                    {currencySymbol}{metrics.netRealizedPnL.toLocaleString()}
+                                </p>
+                            </div>
+                            )}
+                            <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-sm">
+                                <p className="text-xs text-gray-600 uppercase tracking-wider font-bold">Dividends</p>
+                                <p className="text-xl font-bold mt-1 text-accent-cyan">
+                                    {currencySymbol}{metrics.totalDividends.toLocaleString()}
+                                </p>
+                            </div>
+                            <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-sm">
+                                <p className="text-xs text-gray-600 uppercase tracking-wider font-bold">Charges & Taxes</p>
+                                <p className="text-xl font-bold mt-1 text-danger">
+                                    {currencySymbol}{metrics.charges.toLocaleString()}
+                                </p>
+                            </div>
+                            <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-sm">
+                                <p className="text-xs text-gray-600 uppercase tracking-wider font-bold">Cash Balance</p>
+                                <p className="text-xl font-bold mt-1 text-accent-cyan">
+                                    {currencySymbol}{metrics.cashBalance.toLocaleString()}
+                                </p>
+                            </div>
+                            <div className="p-4 rounded-xl bg-white border border-gray-200 shadow-sm">
+                                <p className="text-xs text-gray-600 uppercase tracking-wider font-bold">Net Realized P&L</p>
+                                <p className={`text-xl font-bold mt-1 ${metrics.netRealizedPnL >= 0 ? 'text-success' : 'text-danger'}`}>
+                                    {currencySymbol}{metrics.netRealizedPnL.toLocaleString()}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
