@@ -108,15 +108,18 @@ export const useConsolidatedData = () => {
         // Calculate Market Value & Unrealized P&L using Price Data
         let indCurrentVal = 0;
         let indUnrealized = 0;
-        let indGoldEtfVal = 0;
+        let indCommodityVal = 0;
+        let indCommodityInvested = 0;
         
         Object.entries(indFifo.holdings).forEach(([ticker, data]) => {
             if (data.qty > 0) {
                 const price = indianPrices[ticker.toUpperCase()] || (data.invested / data.qty); // Fallback to cost if no price
                 const marketVal = data.qty * price;
                 
-                if (ticker.toUpperCase() === 'NIPPON GOLD ETF (GOLDBEES)' || ticker.toUpperCase() === 'GOLDBEES' || ticker.toUpperCase().includes('GOLDBEES')) {
-                    indGoldEtfVal += marketVal;
+                const COMMODITY_PATTERNS = ['GOLDBEES', 'SILVERBEES'];
+                if (COMMODITY_PATTERNS.some(p => ticker.toUpperCase().includes(p))) {
+                    indCommodityVal += marketVal;
+                    indCommodityInvested += data.invested;
                 } else {
                     indCurrentVal += marketVal;
                 }
@@ -131,10 +134,10 @@ export const useConsolidatedData = () => {
         const indFees = indianSummary.charges || 0;
 
         // Formula: Capital (Net Deposits) = Open Cost + Cash - Realized Gains - Dividends
-        const indCapital = indFifo.totalInvested + indCash - indRealized - indTotalDivs + indFees;
+        const indCapital = (indFifo.totalInvested - indCommodityInvested) + indCash - indRealized - indTotalDivs + indFees;
 
         // Formula: Profit = Current Value + Cash - Capital
-        const indProfit = (indCurrentVal + indGoldEtfVal + indCash) - indCapital;
+        const indProfit = (indCurrentVal + indCash) - indCapital;
 
         // --- 2. INTERNATIONAL EQUITY (EUR) ---
         const intlFifo = calculateFIFO(intlTrades);
@@ -184,13 +187,13 @@ export const useConsolidatedData = () => {
 
         // Capital (Net Deposits) = Open Cost
         const intlCapitalEUR = intlFifo.totalInvested;
-        const intlCapitalINR = intlCapitalEUR * fixedEurRate;
+        const intlCapitalINR = intlCapitalEUR * conversionRate;
         const intlCurrentValINR = intlCurrentValEUR * conversionRate;
         const intlCashINR = intlCashEUR * conversionRate;
 
         // Calculations in INR
         // Profit = Realized + Unrealized + Dividends - Charges
-        const intlProfitINR = (intlRealizedEUR + intlTotalDivsEUR - intlFeesEUR) * fixedEurRate + (intlUnrealizedEUR * conversionRate);
+        const intlProfitINR = (intlRealizedEUR + intlTotalDivsEUR - intlFeesEUR + intlUnrealizedEUR) * conversionRate;
 
 
         // --- 3. MUTUAL FUNDS ---
@@ -203,14 +206,14 @@ export const useConsolidatedData = () => {
         const mfCapital = mfInvested;
 
 
-        // --- 4. GOLD ETF ---
+        // --- 4. COMMODITY BUCKET (Standalone Gold + Embedded Commodities) ---
         const goldInvested = goldHoldings.reduce((acc, h) => acc + h.invested, 0);
         const goldCurrentVal = goldHoldings.reduce((acc, h) => acc + h.marketValue, 0);
         
-        // Formula: Profit = Unrealized Gain
-        const goldProfit = goldCurrentVal - goldInvested;
-        // Formula: Capital = Total Invested
-        const goldCapital = goldInvested;
+        const commodityCurrentVal = indCommodityVal + goldCurrentVal;
+        const commodityInvested = indCommodityInvested + goldInvested;
+        const commodityProfit = commodityCurrentVal - commodityInvested;
+        const commodityCapital = commodityInvested;
 
 
         // --- 5. CASH EQUIVALENTS ---
@@ -222,17 +225,17 @@ export const useConsolidatedData = () => {
         // --- AGGREGATES ---
 
         // Net Returns Absolute = Sum of Profits
-        const netReturnAbs = indProfit + intlProfitINR + mfProfit + goldProfit + cashEqProfit;
+        const netReturnAbs = indProfit + intlProfitINR + mfProfit + commodityProfit + cashEqProfit;
 
-        // Denominator: Capital (Ind) + Capital (Intl) + Capital (MF) + Capital (Gold) + CashEq Value
-        const totalCapitalBase = indCapital + intlCapitalINR + mfCapital + goldCapital + cashEqVal;
+        // Denominator: Capital (Ind) + Capital (Intl) + Capital (MF) + Capital (Commodity) + CashEq Value
+        const totalCapitalBase = indCapital + intlCapitalINR + mfCapital + commodityCapital + cashEqVal;
 
         // Net Returns %
         const netReturnPct = totalCapitalBase > 0 ? (netReturnAbs / totalCapitalBase) * 100 : 0;
 
         // Net Asset Value (NAV) = Sum of all current Assets + cash
-        // Assets = (Ind Stock Val) + (Ind Cash) + (Intl Stock Val) + (Intl Cash) + (MF Val) + (Gold Val) + (Cash Eq)
-        const netAssetValue = indCurrentVal + indGoldEtfVal + indCash + intlCurrentValINR + intlCashINR + mfCurrentVal + goldCurrentVal + cashEqVal;
+        // Assets = (Ind Stock Val) + (Ind Cash) + (Intl Stock Val) + (Intl Cash) + (MF Val) + (Commodity Val) + (Cash Eq)
+        const netAssetValue = indCurrentVal + indCash + intlCurrentValINR + intlCashINR + mfCurrentVal + commodityCurrentVal + cashEqVal;
         
         // Net Cash (for display)
         const netCash = indCash + intlCashINR + cashEqVal;
@@ -247,8 +250,8 @@ export const useConsolidatedData = () => {
         // intlCurrentValINR is just the stock value.
         const allocIntlEquity = intlCurrentValINR;
 
-        // Gold
-        const allocGold = goldCurrentVal + indGoldEtfVal;
+        // Commodity
+        const allocCommodity = commodityCurrentVal;
 
         // Cash (Net Cash)
         const allocCash = netCash;
@@ -319,7 +322,7 @@ export const useConsolidatedData = () => {
             });
             
             // Terminal value = value of all invested assets (excluding cash, exactly like individual equity views)
-            const terminalValue = indCurrentVal + indGoldEtfVal + intlCurrentValINR + mfCurrentVal + goldCurrentVal;
+            const terminalValue = indCurrentVal + indCommodityVal + intlCurrentValINR + mfCurrentVal + goldCurrentVal;
             
             if (flows.length > 0 && terminalValue > 0) {
                 const val = calculateXIRR(flows, terminalValue);
@@ -341,7 +344,7 @@ export const useConsolidatedData = () => {
             allocations: [
                 { name: 'Indian Equity & MF', value: allocIndianEquity, color: '#7042f8' }, 
                 { name: 'International Equity', value: allocIntlEquity, color: '#00e5ff' }, 
-                { name: 'Gold', value: allocGold, color: '#facc15' }, 
+                { name: 'Commodity', value: allocCommodity, color: '#facc15' }, 
                 { name: 'Net Cash', value: allocCash, color: '#00ffa3' }, 
             ],
             conversionRate

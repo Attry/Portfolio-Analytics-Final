@@ -239,7 +239,7 @@ export const calculateNetAssetValue = (): number => {
 };
 
 export const getTrueInvested = (metrics: any, context: string): number => {
-    if (context === 'INDIAN_EQUITY') {
+    if (context === 'INDIAN_EQUITY' || context === 'INTERNATIONAL_EQUITY') {
         return metrics.totalInvested + metrics.cashBalance - metrics.netRealizedPnL - metrics.totalDividends + (metrics.charges || 0);
     }
     return metrics.totalInvested;

@@ -44,12 +44,6 @@ export interface DividendRecord {
   amount: number;
 }
 
-export interface StockPriceRecord {
-  ticker: string;
-  price: number;
-  date?: string;
-}
-
 export interface WatchlistItem {
   id: string;
   ticker: string;
@@ -65,18 +59,6 @@ export interface CashHolding {
   id: string;
   account: string;
   value: number;
-}
-
-export interface PortfolioSummary {
-  totalInvested: number;
-  currentValue: number;
-  realizedPnL: number;
-  unrealizedPnL: number;
-  charges: number;
-  netRealizedPnL: number;
-  dividends: number;
-  cashBalance: number;
-  winRate: number;
 }
 
 export enum ViewState {

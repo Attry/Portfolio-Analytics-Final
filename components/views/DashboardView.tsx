@@ -235,8 +235,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ metrics, currencyS
                         value={`${netTotalReturns >= 0 ? '+' : '-'}${currencySymbol}${Math.abs(netTotalReturns).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
                         icon={<Coins />} 
                         isPositive={netTotalReturns >= 0}
-                        change={`${netROI.toFixed(2)}%`}
-                        changeLabel="Net ROI"
                     />
                 )}
 

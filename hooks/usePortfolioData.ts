@@ -16,6 +16,62 @@ interface UploadMeta {
     marketDate?: string;
 }
 
+const computeSimpleAssetMetrics = (holdings: any[], referenceDate: Date) => {
+    const totalInvested = holdings.reduce((acc, h) => acc + h.invested, 0);
+    const currentValue = holdings.reduce((acc, h) => acc + h.marketValue, 0);
+    const unrealizedPnL = currentValue - totalInvested;
+    const grossRealizedPnL = 0;
+    const netRealizedPnL = 0;
+    const charges = 0;
+    const totalDividends = 0;
+    const cashBalance = 0;
+    
+    // XIRR Calculation
+    let xirr = 0;
+    const flows: { amount: number, date: Date }[] = [];
+
+    const finalHoldings = holdings.map(h => {
+        let daysHeld = 0;
+        if (h.latestBuyDate) {
+            const buyDate = new Date(h.latestBuyDate);
+            if (!isNaN(buyDate.getTime())) {
+                const diff = referenceDate.getTime() - buyDate.getTime();
+                daysHeld = Math.floor(diff / (1000 * 3600 * 24));
+                if (daysHeld < 0) daysHeld = 0;
+                
+                 // Add to flows for XIRR
+                if (h.invested > 0) {
+                     flows.push({ amount: -h.invested, date: buyDate });
+                }
+            }
+        }
+
+        return {
+            ...h,
+            unrealized: h.marketValue - h.invested,
+            netReturnPct: h.invested > 0 ? ((h.marketValue - h.invested) / h.invested) * 100 : 0,
+            portfolioPct: currentValue > 0 ? (h.marketValue / currentValue) * 100 : 0,
+            daysHeld: isNaN(daysHeld) ? 0 : daysHeld,
+            realized: 0
+        };
+    }).sort((a, b) => b.portfolioPct - a.portfolioPct);
+
+     if (flows.length > 0 && currentValue > 0) {
+         try {
+             const val = calculateXIRR(flows, currentValue, 0.1, referenceDate);
+             if (!isNaN(val) && isFinite(val)) xirr = val * 100;
+         } catch(e) { console.warn("XIRR error", e); }
+     }
+
+    return {
+        totalInvested, currentValue, unrealizedPnL, grossRealizedPnL, netRealizedPnL,
+        charges, totalDividends, cashBalance, xirr,
+        holdings: finalHoldings,
+        hasLiveData: holdings.length > 0,
+        tradePerformance: {}
+    };
+};
+
 const getStorageKeys = (context: AssetContext) => {
     let prefix = 'dhan';
     if (context === 'INTERNATIONAL_EQUITY') prefix = 'intl';
@@ -557,115 +613,11 @@ export const usePortfolioData = (context: AssetContext) => {
         }
 
         if (context === 'MUTUAL_FUNDS') {
-             const totalInvested = mfHoldings.reduce((acc, h) => acc + h.invested, 0);
-             const currentValue = mfHoldings.reduce((acc, h) => acc + h.marketValue, 0);
-             const unrealizedPnL = currentValue - totalInvested;
-             const grossRealizedPnL = 0;
-             const netRealizedPnL = 0;
-             const charges = 0;
-             const totalDividends = 0;
-             const cashBalance = 0;
-             
-             // XIRR Calculation for MF
-             let xirr = 0;
-             const flows: { amount: number, date: Date }[] = [];
-             
-             const finalHoldings = mfHoldings.map(h => {
-                 let daysHeld = 0;
-                 if (h.latestBuyDate) {
-                     const buyDate = new Date(h.latestBuyDate);
-                     if (!isNaN(buyDate.getTime())) {
-                        const diff = referenceDate.getTime() - buyDate.getTime();
-                        daysHeld = Math.floor(diff / (1000 * 3600 * 24));
-                        if (daysHeld < 0) daysHeld = 0;
-                        
-                        // Add to flows for XIRR (Outflow is negative invested)
-                        if (h.invested > 0) {
-                             flows.push({ amount: -h.invested, date: buyDate });
-                        }
-                     }
-                 }
-                 
-                 return {
-                    ...h,
-                    unrealized: h.marketValue - h.invested,
-                    netReturnPct: h.invested > 0 ? ((h.marketValue - h.invested) / h.invested) * 100 : 0,
-                    portfolioPct: currentValue > 0 ? (h.marketValue / currentValue) * 100 : 0,
-                    daysHeld: isNaN(daysHeld) ? 0 : daysHeld,
-                    realized: 0
-                 };
-             }).sort((a, b) => b.portfolioPct - a.portfolioPct);
-
-             if (flows.length > 0 && currentValue > 0) {
-                 try {
-                     const val = calculateXIRR(flows, currentValue);
-                     if (!isNaN(val) && isFinite(val)) xirr = val * 100;
-                 } catch(e) { console.warn("XIRR error", e); }
-             }
-
-             return {
-                 totalInvested, currentValue, unrealizedPnL, grossRealizedPnL, netRealizedPnL,
-                 charges, totalDividends, cashBalance, xirr,
-                 holdings: finalHoldings,
-                 hasLiveData: mfHoldings.length > 0,
-                 tradePerformance: {}
-             };
+             return computeSimpleAssetMetrics(mfHoldings, referenceDate);
         }
 
         if (context === 'GOLD_ETF') {
-            const totalInvested = goldHoldings.reduce((acc, h) => acc + h.invested, 0);
-            const currentValue = goldHoldings.reduce((acc, h) => acc + h.marketValue, 0);
-            const unrealizedPnL = currentValue - totalInvested;
-            const grossRealizedPnL = 0;
-            const netRealizedPnL = 0;
-            const charges = 0;
-            const totalDividends = 0;
-            const cashBalance = 0;
-            
-            // XIRR Calculation for Gold
-            let xirr = 0;
-            const flows: { amount: number, date: Date }[] = [];
-
-            const finalHoldings = goldHoldings.map(h => {
-                let daysHeld = 0;
-                if (h.latestBuyDate) {
-                    const buyDate = new Date(h.latestBuyDate);
-                    if (!isNaN(buyDate.getTime())) {
-                        const diff = referenceDate.getTime() - buyDate.getTime();
-                        daysHeld = Math.floor(diff / (1000 * 3600 * 24));
-                        if (daysHeld < 0) daysHeld = 0;
-                        
-                         // Add to flows for XIRR
-                        if (h.invested > 0) {
-                             flows.push({ amount: -h.invested, date: buyDate });
-                        }
-                    }
-                }
-
-                return {
-                    ...h,
-                    unrealized: h.marketValue - h.invested,
-                    netReturnPct: h.invested > 0 ? ((h.marketValue - h.invested) / h.invested) * 100 : 0,
-                    portfolioPct: currentValue > 0 ? (h.marketValue / currentValue) * 100 : 0,
-                    daysHeld: isNaN(daysHeld) ? 0 : daysHeld,
-                    realized: 0
-                };
-            }).sort((a, b) => b.portfolioPct - a.portfolioPct);
-
-             if (flows.length > 0 && currentValue > 0) {
-                 try {
-                     const val = calculateXIRR(flows, currentValue);
-                     if (!isNaN(val) && isFinite(val)) xirr = val * 100;
-                 } catch(e) { console.warn("XIRR error", e); }
-             }
-
-            return {
-                totalInvested, currentValue, unrealizedPnL, grossRealizedPnL, netRealizedPnL,
-                charges, totalDividends, cashBalance, xirr,
-                holdings: finalHoldings,
-                hasLiveData: goldHoldings.length > 0,
-                tradePerformance: {}
-            };
+            return computeSimpleAssetMetrics(goldHoldings, referenceDate);
        }
 
         const allTrades = [...baseTrades, ...trades];
@@ -790,17 +742,6 @@ export const usePortfolioData = (context: AssetContext) => {
                 const flows = allTrades.map(t => ({ amount: t.netAmount, date: new Date(t.date) }));
                 const val = calculateXIRR(flows, totalInvested + totalUnrealizedPnL);
                 
-                // --- DEBUG TRACE ---
-                if (context === 'INTERNATIONAL_EQUITY') {
-                    console.log('--- INTERNATIONAL EQUITY TRACE ---');
-                    console.log('flows:', flows);
-                    console.log('totalInvested:', totalInvested);
-                    console.log('finalTotalInvested:', finalTotalInvested);
-                    console.log('totalUnrealizedPnL:', totalUnrealizedPnL);
-                    console.log('terminalValue passed to XIRR:', totalInvested + totalUnrealizedPnL);
-                    console.log('XIRR output (raw):', val);
-                }
-
                 if (!isNaN(val) && isFinite(val)) xirr = val * 100;
              } catch(e) {}
         }
