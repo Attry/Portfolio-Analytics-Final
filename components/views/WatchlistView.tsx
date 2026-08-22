@@ -1,9 +1,10 @@
 
 import React, { useState, useMemo } from 'react';
-import { ListChecks, Plus, Search, X, ExternalLink, Trash2, Lock, Code, Copy, Check, Telescope } from 'lucide-react';
+import { ListChecks, Plus, Search, X, ExternalLink, Trash2, Lock, Code, Copy, Check, Telescope, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { WatchlistItem } from '../../types';
 import { generateGoogleAppsScript } from '../../utils/scriptGenerator';
 import { CartoonBackground } from '../CartoonBackground';
+import { useSortableData } from '../../hooks/useSortableData';
 
 interface WatchlistViewProps {
   watchlist: WatchlistItem[];
@@ -25,6 +26,56 @@ export const WatchlistView: React.FC<WatchlistViewProps> = ({ watchlist, priceDa
 
     const availableTickers = useMemo(() => Object.keys(priceData).sort(), [priceData]);
     const filteredWatchlistSearch = useMemo(() => availableTickers.filter(t => t.toLowerCase().includes(watchlistSearch.toLowerCase())), [availableTickers, watchlistSearch]);
+
+    const enrichedWatchlist = useMemo(() => {
+        return watchlist.map(item => {
+            const tickerUpper = item.ticker.toUpperCase();
+            const currentPrice = priceData[tickerUpper] || 0;
+            
+            // Determine Effective Desired Entry (Closest S level)
+            const supports = [item.s1, item.s2, item.s3].filter(s => s && s > 0) as number[];
+            let effectiveDesiredEntry = item.desiredEntryPrice || 0;
+            const hasSupports = supports.length > 0;
+
+            if (hasSupports) {
+                if (currentPrice > 0) {
+                    effectiveDesiredEntry = supports.reduce((prev, curr) => 
+                        Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev
+                    );
+                } else {
+                    effectiveDesiredEntry = supports[0];
+                }
+            }
+
+            const mos = item.intrinsicValue > 0 
+                ? (1 - (currentPrice / item.intrinsicValue)) * 100 
+                : 0;
+            
+            const callRatio = currentPrice > 0 
+                ? effectiveDesiredEntry / currentPrice 
+                : 0;
+                
+            return {
+                ...item,
+                currentPrice,
+                effectiveDesiredEntry,
+                mos,
+                callRatio,
+                hasSupports
+            };
+        });
+    }, [watchlist, priceData]);
+
+    const { items: sortedWatchlist, requestSort, sortConfig } = useSortableData(enrichedWatchlist);
+
+    const renderSortIcon = (columnKey: string) => {
+        if (sortConfig.key !== columnKey || sortConfig.direction === null) {
+            return <ChevronsUpDown className="inline w-3 h-3 ml-1 text-gray-400 opacity-50" />;
+        }
+        return sortConfig.direction === 'asc' 
+            ? <ChevronUp className="inline w-3 h-3 ml-1 text-primary" /> 
+            : <ChevronDown className="inline w-3 h-3 ml-1 text-primary" />;
+    };
 
     const handleGenerateScript = () => {
         const script = generateGoogleAppsScript(watchlist, '', context);
@@ -118,12 +169,24 @@ export const WatchlistView: React.FC<WatchlistViewProps> = ({ watchlist, priceDa
                     <table className="w-full text-left min-w-[900px] md:min-w-full">
                         <thead className="bg-gray-100 text-gray-600 text-xs uppercase font-bold tracking-wider sticky top-0 z-10 shadow-md border-b-2 border-gray-200">
                             <tr>
-                                <th className="px-4 md:px-6 py-4">Name</th>
-                                <th className="px-4 md:px-6 py-4 text-right">Current Price</th>
-                                <th className="px-4 md:px-6 py-4 text-right">Desired Entry</th>
-                                <th className="px-4 md:px-6 py-4 text-right">Intrinsic Value</th>
-                                <th className="px-4 md:px-6 py-4 text-right">Margin of Safety</th>
-                                <th className="px-4 md:px-6 py-4 text-right">Call Ratio</th>
+                                <th className="px-4 md:px-6 py-4 cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestSort('ticker')}>
+                                    Name {renderSortIcon('ticker')}
+                                </th>
+                                <th className="px-4 md:px-6 py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestSort('currentPrice')}>
+                                    Current Price {renderSortIcon('currentPrice')}
+                                </th>
+                                <th className="px-4 md:px-6 py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestSort('effectiveDesiredEntry')}>
+                                    Desired Entry {renderSortIcon('effectiveDesiredEntry')}
+                                </th>
+                                <th className="px-4 md:px-6 py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestSort('intrinsicValue')}>
+                                    Intrinsic Value {renderSortIcon('intrinsicValue')}
+                                </th>
+                                <th className="px-4 md:px-6 py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestSort('mos')}>
+                                    Margin of Safety {renderSortIcon('mos')}
+                                </th>
+                                <th className="px-4 md:px-6 py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestSort('callRatio')}>
+                                    Call Ratio {renderSortIcon('callRatio')}
+                                </th>
                                 <th className="px-2 py-4 text-center">S1</th>
                                 <th className="px-2 py-4 text-center">S2</th>
                                 <th className="px-2 py-4 text-center">S3</th>
@@ -133,40 +196,17 @@ export const WatchlistView: React.FC<WatchlistViewProps> = ({ watchlist, priceDa
                             </tr>
                         </thead>
                         <tbody className="divide-y-2 divide-gray-200">
-                            {watchlist.map(item => {
-                                // Fix: Ensure uppercase key lookup for price
+                            {sortedWatchlist.map(item => {
+                                // Extract computed values from item
+                                const { currentPrice, effectiveDesiredEntry, mos, callRatio, hasSupports } = item;
+                                
                                 const tickerUpper = item.ticker.toUpperCase();
-                                const currentPrice = priceData[tickerUpper] || 0;
                                 const nativeCurrency = assetCurrencies[tickerUpper];
                                 let itemCurrencySymbol = currencySymbol;
                                 if (context === 'INTERNATIONAL_EQUITY' && nativeCurrency) {
                                     itemCurrencySymbol = nativeCurrency === 'USD' || nativeCurrency === 'DOLLAR' ? '$' : nativeCurrency === 'CHF' ? 'CHF ' : nativeCurrency === 'GBP' ? '£' : nativeCurrency === 'SEK' ? 'kr ' : nativeCurrency === 'NOK' ? 'kr ' : nativeCurrency === 'EUR' ? '€' : (nativeCurrency + ' ');
                                 }
                                 
-                                // Determine Effective Desired Entry (Closest S level)
-                                const supports = [item.s1, item.s2, item.s3].filter(s => s && s > 0) as number[];
-                                let effectiveDesiredEntry = item.desiredEntryPrice || 0;
-                                const hasSupports = supports.length > 0;
-
-                                if (hasSupports) {
-                                    if (currentPrice > 0) {
-                                        // Find support closest to current price
-                                        effectiveDesiredEntry = supports.reduce((prev, curr) => 
-                                            Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev
-                                        );
-                                    } else {
-                                        effectiveDesiredEntry = supports[0];
-                                    }
-                                }
-
-                                const mos = item.intrinsicValue > 0 
-                                    ? (1 - (currentPrice / item.intrinsicValue)) * 100 
-                                    : 0;
-                                
-                                const callRatio = currentPrice > 0 
-                                    ? effectiveDesiredEntry / currentPrice 
-                                    : 0;
-
                                 let callStatus = 'Expensive';
                                 let callColor = 'text-danger bg-danger/10 border-danger';
                                 

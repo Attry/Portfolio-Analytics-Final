@@ -1,8 +1,9 @@
 
 import React from 'react';
-import { Wallet, Trash2, Briefcase } from 'lucide-react';
+import { Wallet, Trash2, Briefcase, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { AssetContext } from '../../types';
 import { CartoonBackground } from '../CartoonBackground';
+import { useSortableData } from '../../hooks/useSortableData';
 
 interface HoldingsViewProps {
   metrics: any;
@@ -18,6 +19,17 @@ interface HoldingsViewProps {
 
 export const HoldingsView: React.FC<HoldingsViewProps> = ({ metrics, currencySymbol, context, onUpdateHolding, onDeleteHolding, assetCurrencies = {}, portfolioPrices = {}, portfolioCurrencies = {}, portfolioValues = {} }) => {
     
+    const { items: sortedCashEquivalents, requestSort: requestCashSort, sortConfig: cashSortConfig } = useSortableData(metrics.holdings);
+    
+    const renderSortIcon = (config: any, columnKey: string) => {
+        if (config.key !== columnKey || config.direction === null) {
+            return <ChevronsUpDown className="inline w-3 h-3 ml-1 text-gray-400 opacity-50" />;
+        }
+        return config.direction === 'asc' 
+            ? <ChevronUp className="inline w-3 h-3 ml-1 text-primary" /> 
+            : <ChevronDown className="inline w-3 h-3 ml-1 text-primary" />;
+    };
+
     if (context === 'CASH_EQUIVALENTS') {
         return (
             <div className="glass-card rounded-2xl overflow-hidden animate-fade-in flex flex-col h-full border border-gray-200 shadow-md">
@@ -25,13 +37,17 @@ export const HoldingsView: React.FC<HoldingsViewProps> = ({ metrics, currencySym
                     <table className="w-full text-left border-collapse min-w-[350px] md:min-w-full">
                         <thead className="bg-gray-100 text-gray-600 text-[10px] md:text-xs uppercase font-bold tracking-wider sticky top-0 z-10 shadow-sm border-b-2 border-gray-200">
                             <tr>
-                                <th className="px-2 py-3 md:px-6 md:py-4">Account</th>
-                                <th className="px-2 py-3 md:px-6 md:py-4 text-right">Value ({currencySymbol})</th>
+                                <th className="px-2 py-3 md:px-6 md:py-4 cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestCashSort('account')}>
+                                    Account {renderSortIcon(cashSortConfig, 'account')}
+                                </th>
+                                <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestCashSort('value')}>
+                                    Value ({currencySymbol}) {renderSortIcon(cashSortConfig, 'value')}
+                                </th>
                                 <th className="px-2 py-3 md:px-6 md:py-4 text-center w-12 md:w-16">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y-2 divide-gray-200">
-                            {metrics.holdings.map((h: any) => (
+                            {sortedCashEquivalents.map((h: any) => (
                                 <tr key={h.id} className="hover:bg-gray-50 transition-colors text-xs md:text-sm group">
                                     <td className="px-2 py-2 md:px-6 md:py-4">
                                         <input 
@@ -75,6 +91,7 @@ export const HoldingsView: React.FC<HoldingsViewProps> = ({ metrics, currencySym
     }
 
     const showRealized = context !== 'MUTUAL_FUNDS' && context !== 'GOLD_ETF';
+    const { items: sortedHoldings, requestSort: requestHoldingsSort, sortConfig: holdingsSortConfig } = useSortableData(metrics.holdings, { key: 'portfolioPct', direction: 'desc' });
 
     return (
         <div className="glass-card rounded-2xl overflow-hidden animate-fade-in flex flex-col h-full border border-gray-200 shadow-md relative">
@@ -83,21 +100,35 @@ export const HoldingsView: React.FC<HoldingsViewProps> = ({ metrics, currencySym
                 <table className="w-full text-left border-collapse min-w-[600px] md:min-w-full">
                     <thead className="bg-gray-100 text-gray-600 text-[10px] md:text-xs uppercase font-bold tracking-wider sticky top-0 z-10 shadow-md border-b-2 border-gray-200">
                         <tr>
-                            <th className="px-2 py-3 md:px-6 md:py-4 min-w-[100px]">
-                                {(context === 'MUTUAL_FUNDS' || context === 'GOLD_ETF') ? 'Fund' : 'Stock'}
+                            <th className="px-2 py-3 md:px-6 md:py-4 min-w-[100px] cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('ticker')}>
+                                {(context === 'MUTUAL_FUNDS' || context === 'GOLD_ETF') ? 'Fund' : 'Stock'} {renderSortIcon(holdingsSortConfig, 'ticker')}
                             </th>
-                            <th className="px-2 py-3 md:px-6 md:py-4 text-right">Qty</th>
+                            <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('qty')}>
+                                Qty {renderSortIcon(holdingsSortConfig, 'qty')}
+                            </th>
                             <th className="px-2 py-3 md:px-6 md:py-4 text-right">Avg / Cur</th>
-                            <th className="px-2 py-3 md:px-6 md:py-4 text-right">Inv</th>
-                            <th className="px-2 py-3 md:px-6 md:py-4 text-right">Cur Val</th>
-                            <th className="px-2 py-3 md:px-6 md:py-4 text-right">% Port</th>
-                            <th className="px-2 py-3 md:px-6 md:py-4 text-right">Days</th>
-                            {showRealized && <th className="px-2 py-3 md:px-6 md:py-4 text-right">R. P&L</th>}
-                            <th className="px-2 py-3 md:px-6 md:py-4 text-right">Unr. P&L</th>
+                            <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('invested')}>
+                                Inv {renderSortIcon(holdingsSortConfig, 'invested')}
+                            </th>
+                            <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('marketValue')}>
+                                Cur Val {renderSortIcon(holdingsSortConfig, 'marketValue')}
+                            </th>
+                            <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('portfolioPct')}>
+                                % Port {renderSortIcon(holdingsSortConfig, 'portfolioPct')}
+                            </th>
+                            <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('daysHeld')}>
+                                Days {renderSortIcon(holdingsSortConfig, 'daysHeld')}
+                            </th>
+                            {showRealized && <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('realized')}>
+                                R. P&L {renderSortIcon(holdingsSortConfig, 'realized')}
+                            </th>}
+                            <th className="px-2 py-3 md:px-6 md:py-4 text-right cursor-pointer hover:bg-gray-200 transition-colors select-none" onClick={() => requestHoldingsSort('unrealized')}>
+                                Unr. P&L {renderSortIcon(holdingsSortConfig, 'unrealized')}
+                            </th>
                         </tr>
                     </thead>
                     <tbody className="divide-y-2 divide-gray-200">
-                        {metrics.holdings.map((h: any, i: number) => {
+                        {sortedHoldings.map((h: any, i: number) => {
                             const isCash = h.ticker === 'CASH BALANCE';
                             let avgPrice = h.qty > 0 ? h.invested / h.qty : 0;
                             const curPrice = h.isLive ? h.livePrice : (h.qty > 0 ? h.marketValue / h.qty : 0);
