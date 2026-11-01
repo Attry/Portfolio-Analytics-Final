@@ -95,6 +95,25 @@ const PortfolioDashboard: React.FC<{ context: AssetContext, currentView: ViewSta
     return () => clearTimeout(timer);
   }, [sheetId, context]); 
 
+  // Initial currency rate fetch for International Equity
+  useEffect(() => {
+    if (context === 'INTERNATIONAL_EQUITY') {
+        const fetchCurrencies = async () => {
+            try {
+                const curUrl = `https://docs.google.com/spreadsheets/d/1Dwd4qJqOWsTdvbzDEV269Mg62slqFP6eUEFTZh1vnp8/gviz/tq?tqx=out:csv`;
+                const curResponse = await fetch(curUrl);
+                if (curResponse.ok) {
+                    const curCsv = await curResponse.text();
+                    processFile(curCsv, 'CURRENCY_RATES', globalMarketDate, true);
+                }
+            } catch (curError) {
+                console.warn("Currency rates initial fetch warning:", curError);
+            }
+        };
+        fetchCurrencies();
+    }
+  }, [context]);
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>, type: any) => {
     const file = event.target.files?.[0];
     if (!file) return;

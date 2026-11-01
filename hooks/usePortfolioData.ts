@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { AssetContext, Trade, PnLRecord, LedgerRecord, DividendRecord, WatchlistItem, ViewState, CashHolding } from '../types';
 import { calculateFIFO, calculateXIRR, PerStockData, calculateNetAssetValue } from '../utils/financials';
 import { parseMarketDataCSV, parseIndianEquity, parseInternationalEquity, parseMutualFundCSV, parseGoldETFCSV, parseCurrencyRatesCSV, ParseResult } from '../services/csvParsers';
+import { expandCurrencyRates, getRateToEuro, DEFAULT_CURRENCY_RATES } from '../utils/currency';
 
 type UploadType = 'PNL' | 'LEDGER' | 'DIVIDEND' | 'TRADE_HISTORY' | 'MARKET_DATA' | 'PORTFOLIO_SNAPSHOT' | 'CURRENCY_RATES';
 
@@ -14,6 +15,7 @@ interface UploadMeta {
     market?: string;
     portfolio?: string;
     marketDate?: string;
+    currencyRates?: string;
 }
 
 const computeSimpleAssetMetrics = (holdings: any[], referenceDate: Date) => {
@@ -135,7 +137,14 @@ export const usePortfolioData = (context: AssetContext) => {
     const [portfolioPrices, setPortfolioPrices] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_portfolio') || '{}'));
     const [portfolioCurrencies, setPortfolioCurrencies] = useState<Record<string, string>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_portfolio_currencies') || '{}'));
     const [portfolioValues, setPortfolioValues] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_portfolio_values') || '{}'));
-    const [currencyRates, setCurrencyRates] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_rates') || '{}'));
+    const [currencyRates, setCurrencyRates] = useState<Record<string, number>>(() => {
+        try {
+            const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.PRICES + '_rates') || '{}');
+            return expandCurrencyRates(stored);
+        } catch {
+            return DEFAULT_CURRENCY_RATES;
+        }
+    });
     const [watchlist, setWatchlist] = useState<WatchlistItem[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.WATCHLIST) || '[]'));
     const [uploadMeta, setUploadMeta] = useState<UploadMeta>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.META) || '{}'));
     
@@ -518,9 +527,10 @@ export const usePortfolioData = (context: AssetContext) => {
             } else if (type === 'CURRENCY_RATES') {
                 result = parseCurrencyRatesCSV(content);
                 if (result.success && result.data) {
-                    const updatedRates = { ...currencyRates, ...result.data };
+                    const updatedRates = expandCurrencyRates({ ...currencyRates, ...result.data });
                     setCurrencyRates(updatedRates);
                     persist(STORAGE_KEYS.PRICES + '_rates', updatedRates);
+                    updateMeta({ currencyRates: new Date().toISOString() });
                 }
             } else if (context === 'INDIAN_EQUITY') {
                 result = parseIndianEquity(type, rawRows);
@@ -662,8 +672,9 @@ export const usePortfolioData = (context: AssetContext) => {
                   marketValue = data.qty * livePrice;
                   if (context === 'INTERNATIONAL_EQUITY') {
                       const nativeCurrency = assetCurrencies[ticker.toUpperCase()];
-                      if (nativeCurrency && nativeCurrency !== 'EUR' && currencyRates[nativeCurrency]) {
-                          marketValue = marketValue * currencyRates[nativeCurrency];
+                      const rate = getRateToEuro(nativeCurrency, currencyRates);
+                      if (rate && rate !== 1.0) {
+                          marketValue = marketValue * rate;
                       }
                   }
                   unrealized = marketValue - currentInvested;
@@ -756,7 +767,7 @@ export const usePortfolioData = (context: AssetContext) => {
     }, [trades, pnlData, ledgerData, dividendData, priceData, assetCurrencies, currencyRates, portfolioValues, summary, context, mfHoldings, goldHoldings, cashHoldings, globalMarketDate, baseTrades, baseSummary]);
 
     return {
-        trades, pnlData, ledgerData, dividendData, priceData, assetCurrencies, portfolioPrices, portfolioCurrencies, portfolioValues, watchlist, uploadMeta, sheetId,
+        trades, pnlData, ledgerData, dividendData, priceData, assetCurrencies, currencyRates, portfolioPrices, portfolioCurrencies, portfolioValues, watchlist, uploadMeta, sheetId,
         metrics, lastUploadPreview, MUTUAL_FUND_SHEET_URL, GOLD_ETF_SHEET_URL, globalMarketDate,
         baseTrades, baseSummary, convertToBaseData, clearBaseData,
         processFile, clearAllData, addToWatchlist, removeFromWatchlist, updateWatchlistItem, updateMeta, saveSheetId, updateGlobalDate,

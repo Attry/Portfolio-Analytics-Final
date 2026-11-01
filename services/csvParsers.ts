@@ -1,6 +1,7 @@
 
 import { Trade, TradeType, PnLRecord, LedgerRecord, DividendRecord } from '../types';
 import { clean, normalizeHeader, parseNum, parseIndianDate } from '../utils/common';
+import { expandCurrencyRates, getRateToEuro, normalizeCurrency } from '../utils/currency';
 
 // --- Parser Helper Functions ---
 
@@ -63,12 +64,14 @@ export type ParseResult<T> = {
 export const parseCurrencyRatesCSV = (content: string): ParseResult<Record<string, number>> => {
     try {
         const lines = content.split('\n').filter(line => line.trim() !== '');
-        const rawRows = lines.map(line => line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/));
+        const delimiter = (lines[0] || '').includes(';') ? ';' : ',';
+        const splitRegex = delimiter === ';' ? /;(?=(?:(?:[^"]*"){2})*[^"]*$)/ : /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
+        const rawRows = lines.map(line => line.split(splitRegex));
         
         let hIdx = -1;
         for(let i = 0; i < Math.min(rawRows.length, 50); i++) {
             const rowStr = rawRows[i].join(' ').toLowerCase();
-            if (rowStr.includes('currency') && (rowStr.includes('conversion') || rowStr.includes('euro'))) {
+            if (rowStr.includes('currency') && (rowStr.includes('conversion') || rowStr.includes('euro') || rowStr.includes('rate'))) {
                 hIdx = i;
                 break;
             }
@@ -78,24 +81,28 @@ export const parseCurrencyRatesCSV = (content: string): ParseResult<Record<strin
         
         const headers = rawRows[hIdx];
         const rows = rawRows.slice(hIdx + 1);
-        const idxCurrency = getColIndex(headers, ['Currency']);
-        const idxRate = getColIndex(headers, ['Conversion to Euro', 'Rate', 'Conversion']);
+        const idxCurrency = getColIndex(headers, ['Currency', 'Devise']);
+        const idxRate = getColIndex(headers, ['Conversion to Euro', 'Rate', 'Conversion', 'Euro', 'EUR']);
         
         if (idxCurrency === -1 || idxRate === -1) return { success: false, message: "Currency or Conversion columns not identified." };
         
         const rates: Record<string, number> = {};
+        let count = 0;
         
         rows.forEach(row => {
-            const currency = clean(row[idxCurrency] || '').toUpperCase();
+            const rawCurrency = clean(row[idxCurrency] || '').toUpperCase();
             const rateRaw = row[idxRate] || '';
             const rate = Math.abs(parseNum(rateRaw));
             
-            if (currency && rate > 0) {
-                rates[currency] = rate;
+            if (rawCurrency && rate > 0) {
+                rates[rawCurrency] = rate;
+                count++;
             }
         });
         
-        return { success: true, data: rates, headers, message: `Updated rates for ${Object.keys(rates).length} currencies.` };
+        const expandedRates = expandCurrencyRates(rates);
+        
+        return { success: true, data: expandedRates, headers, message: `Updated rates for ${count} currencies (Dollar, CHF, GBP, JPY, HKD, SGD, CAD, EUR).` };
     } catch (e: any) {
         return { success: false, message: e.message };
     }
@@ -139,7 +146,8 @@ export const parseMarketDataCSV = (content: string): ParseResult<Record<string, 
             const ticker = clean(row[idxTicker] || '').toUpperCase();
             const priceRaw = row[idxPrice] || '';
             const price = Math.abs(parseNum(priceRaw));
-            const currency = idxCurrency !== -1 ? clean(row[idxCurrency] || '').toUpperCase() : 'EUR';
+            const rawCurrency = idxCurrency !== -1 ? clean(row[idxCurrency] || '').toUpperCase() : 'EUR';
+            const currency = normalizeCurrency(rawCurrency);
 
             if (ticker && price > 0) {
                 newPrices[ticker] = price;
@@ -656,11 +664,7 @@ export const parseInternationalEquity = (type: string, rawRows: string[][]): Par
                        const amountVal = parseFloat(valStr.replace(/\./g, '').replace(',', '.'));
 
                        if (!isNaN(amountVal) && amountVal !== 0) {
-                           let rate = 1.0; 
-                           if (currency === 'USD') rate = 0.92;
-                           else if (currency === 'NO' || currency === 'NOK') rate = 0.088; 
-                           else if (currency === 'SEK') rate = 0.087;
-                           else if (currency === 'GBP') rate = 1.17;
+                           const rate = getRateToEuro(currency);
 
                            const convertedAmount = Math.abs(amountVal) * rate;
 
@@ -718,7 +722,8 @@ export const parseInternationalEquity = (type: string, rawRows: string[][]): Par
           rows.forEach(row => {
               const ticker = clean(row[idxProduct] || '').toUpperCase();
               const price = Math.abs(parseNum(row[idxPrice] || ''));
-              const currency = idxCurrency !== -1 ? clean(row[idxCurrency] || '').toUpperCase() : 'EUR';
+              const rawCurrency = idxCurrency !== -1 ? clean(row[idxCurrency] || '').toUpperCase() : 'EUR';
+              const currency = normalizeCurrency(rawCurrency);
               const valueInEur = idxValue !== -1 ? parseNum(row[idxValue] || '') : 0;
               
               // Skip Cash row for prices

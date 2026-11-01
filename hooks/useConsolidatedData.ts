@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Trade, TradeType, CashHolding, LedgerRecord, DividendRecord, PnLRecord, PortfolioSnapshot } from '../types';
 import { calculateFIFO, calculateXIRR } from '../utils/financials';
+import { getRateToEuro } from '../utils/currency';
 
 export const useConsolidatedData = () => {
     const [conversionRate, setConversionRate] = useState<number>(() => {
@@ -163,16 +164,17 @@ export const useConsolidatedData = () => {
                 let marketVal = data.qty * finalPrice;
                 
                 // Fetch the exchange rates to convert to EUR properly if needed
-                let intlCurrencies = {};
-                let intlRates = {};
+                let intlCurrencies: Record<string, string> = {};
+                let intlRates: Record<string, number> = {};
                 try {
-                    intlCurrencies = JSON.parse(localStorage.getItem('international_equity_prices_currencies') || '{}');
-                    intlRates = JSON.parse(localStorage.getItem('international_equity_prices_rates') || '{}');
+                    intlCurrencies = JSON.parse(localStorage.getItem('intl_prices_currencies') || localStorage.getItem('international_equity_prices_currencies') || '{}');
+                    intlRates = JSON.parse(localStorage.getItem('intl_prices_rates') || localStorage.getItem('international_equity_prices_rates') || '{}');
                 } catch(e) {}
                 
                 const nativeCurrency = intlCurrencies[ticker.toUpperCase()];
-                if (nativeCurrency && nativeCurrency !== 'EUR' && intlRates[nativeCurrency]) {
-                    marketVal = marketVal * intlRates[nativeCurrency];
+                const rate = getRateToEuro(nativeCurrency, intlRates);
+                if (rate && rate !== 1.0) {
+                    marketVal = marketVal * rate;
                 }
                 
                 intlCurrentValEUR += marketVal;

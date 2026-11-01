@@ -4,6 +4,7 @@ import { Crosshair, Plus, X, ExternalLink, Save, Target, AlertCircle, TrendingUp
 import { WatchlistItem, AssetContext } from '../../types';
 import { CartoonBackground } from '../CartoonBackground';
 import { calculateNetAssetValue } from '../../utils/financials';
+import { getCurrencySymbol } from '../../utils/currency';
 
 interface DecisionArenaViewProps {
   metrics: any;
@@ -39,8 +40,7 @@ export const DecisionArenaView: React.FC<DecisionArenaViewProps> = ({
     const getNativeCurrencySymbol = (ticker: string) => {
         if (context !== 'INTERNATIONAL_EQUITY') return currencySymbol;
         const nativeCurrency = assetCurrencies[ticker.toUpperCase()];
-        if (!nativeCurrency) return currencySymbol;
-        return nativeCurrency === 'USD' || nativeCurrency === 'DOLLAR' ? '$' : nativeCurrency === 'CHF' ? 'CHF ' : nativeCurrency === 'GBP' ? '£' : nativeCurrency === 'SEK' ? 'kr ' : nativeCurrency === 'NOK' ? 'kr ' : nativeCurrency === 'EUR' ? '€' : (nativeCurrency + ' ');
+        return getCurrencySymbol(nativeCurrency, currencySymbol);
     };
     
     const [editForm, setEditForm] = useState<{ 

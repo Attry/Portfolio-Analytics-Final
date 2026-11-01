@@ -4,7 +4,7 @@ import { AssetContext } from '../../types';
 import { formatLastSync } from '../../utils/common';
 import { CartoonBackground } from '../CartoonBackground';
 
-type UploadType = 'PNL' | 'LEDGER' | 'DIVIDEND' | 'TRADE_HISTORY' | 'MARKET_DATA' | 'PORTFOLIO_SNAPSHOT';
+type UploadType = 'PNL' | 'LEDGER' | 'DIVIDEND' | 'TRADE_HISTORY' | 'MARKET_DATA' | 'PORTFOLIO_SNAPSHOT' | 'CURRENCY_RATES';
 
 interface UploadViewProps {
     context: AssetContext;
@@ -44,7 +44,7 @@ export const UploadView: React.FC<UploadViewProps> = ({
         // Keys prefixes used by the app
         const keysToBackup = [
             'dhan_', 'intl_', 'gold_', 'cash_', 'mf_', 'GLOBAL_MARKET_DATE', 'portfolio_snapshots',
-            'fixed_eur_buy_rate', 'eur_to_inr_rate'
+            'fixed_eur_buy_rate', 'eur_to_inr_rate', 'intl_prices_rates', 'intl_prices_currencies'
         ];
         
         let count = 0;
@@ -117,7 +117,8 @@ export const UploadView: React.FC<UploadViewProps> = ({
                { id: 'TRADE_HISTORY', label: 'Trade History', icon: <History />, desc: 'Degiro Transactions CSV' },
                { id: 'LEDGER', label: 'Account Statement', icon: <FileText />, desc: 'Degiro Account CSV (Dividends)' },
                { id: 'PORTFOLIO_SNAPSHOT', label: 'Portfolio', icon: <Briefcase />, desc: 'Degiro Portfolio CSV (Prices)' },
-               { id: 'MARKET_DATA', label: 'Market Prices', icon: <LineChartIcon />, desc: 'General Market Data CSV' },
+               { id: 'MARKET_DATA', label: 'Market Prices', icon: <LineChartIcon />, desc: 'Degiro Market Data CSV' },
+               { id: 'CURRENCY_RATES', label: 'Currency Rates', icon: <Coins />, desc: 'Currency Conversion CSV (Dollar, CHF, GBP, JPY, HKD, SGD, CAD)' },
             ];
         }
         return [];
@@ -342,6 +343,9 @@ export const UploadView: React.FC<UploadViewProps> = ({
                                 )}
                                 {type.id === 'MARKET_DATA' && uploadMeta.market && (
                                     <p className="text-[10px] text-accent-cyan mt-2 flex items-center justify-center bg-accent-cyan/10 py-1 rounded-full border border-accent-cyan"><CheckCircle2 size={10} className="mr-1"/> Synced: {formatLastSync(uploadMeta.market)}</p>
+                                )}
+                                {type.id === 'CURRENCY_RATES' && uploadMeta.currencyRates && (
+                                    <p className="text-[10px] text-success mt-2 flex items-center justify-center bg-success/10 py-1 rounded-full border border-success"><CheckCircle2 size={10} className="mr-1"/> Synced: {formatLastSync(uploadMeta.currencyRates)}</p>
                                 )}
                                 </div>
                             </div>

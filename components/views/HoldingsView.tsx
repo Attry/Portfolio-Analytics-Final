@@ -4,6 +4,7 @@ import { Wallet, Trash2, Briefcase, ChevronUp, ChevronDown, ChevronsUpDown } fro
 import { AssetContext } from '../../types';
 import { CartoonBackground } from '../CartoonBackground';
 import { useSortableData } from '../../hooks/useSortableData';
+import { getCurrencySymbol } from '../../utils/currency';
 
 interface HoldingsViewProps {
   metrics: any;
@@ -145,7 +146,7 @@ export const HoldingsView: React.FC<HoldingsViewProps> = ({ metrics, currencySym
                                 // Currency for current price
                                 const nativeCurrency = assetCurrencies[upperTicker];
                                 if (nativeCurrency) {
-                                    currentPriceSymbol = nativeCurrency === 'USD' || nativeCurrency === 'DOLLAR' ? '$' : nativeCurrency === 'CHF' ? 'CHF ' : nativeCurrency === 'GBP' ? '£' : nativeCurrency === 'SEK' ? 'kr ' : nativeCurrency === 'NOK' ? 'kr ' : nativeCurrency === 'EUR' ? '€' : (nativeCurrency + ' ');
+                                    currentPriceSymbol = getCurrencySymbol(nativeCurrency, currencySymbol);
                                 }
                             }
                             
@@ -161,9 +162,9 @@ export const HoldingsView: React.FC<HoldingsViewProps> = ({ metrics, currencySym
                                 <td className="px-2 py-2 md:px-6 md:py-4 text-right font-sans tracking-tight font-medium">
                                     {isCash ? '-' : (
                                         <>
-                                            <span className="text-gray-700">{avgPriceSymbol}{avgPrice.toFixed(0)}</span>
+                                            <span className="text-gray-700">{avgPriceSymbol}{avgPrice > 0 && avgPrice < 10 ? avgPrice.toFixed(2) : avgPrice.toFixed(0)}</span>
                                             <span className="text-gray-400 mx-1">/</span>
-                                            <span className="text-gray-900 font-medium">{currentPriceSymbol}{curPrice.toFixed(0)}</span>
+                                            <span className="text-gray-900 font-medium">{currentPriceSymbol}{curPrice > 0 && curPrice < 10 ? curPrice.toFixed(2) : curPrice.toFixed(0)}</span>
                                         </>
                                     )}
                                 </td>

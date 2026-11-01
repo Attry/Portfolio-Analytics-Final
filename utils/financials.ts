@@ -1,5 +1,5 @@
-
 import { Trade, TradeType } from '../types';
+import { getRateToEuro } from './currency';
 
 export interface PerStockData {
   qty: number;
@@ -192,6 +192,8 @@ export const calculateNetAssetValue = (): number => {
     const rawIntlTrades: any[] = [...(getLocal('intl_base_trades') || []), ...(getLocal('intl_trades') || [])];
     const intlTrades = Array.from(new Map(rawIntlTrades.map(t => [t.id, t])).values());
     const intlPrices: Record<string, number> = getLocal('intl_prices') || {};
+    const intlCurrencies: Record<string, string> = getLocal('intl_prices_currencies') || getLocal('international_equity_prices_currencies') || {};
+    const intlRates: Record<string, number> = getLocal('intl_prices_rates') || getLocal('international_equity_prices_rates') || {};
     const intlSummaryObj = getLocal('intl_summary') || {};
     const intlSummary = {
         cash: intlSummaryObj.cash !== undefined ? intlSummaryObj.cash : 0,
@@ -209,7 +211,9 @@ export const calculateNetAssetValue = (): number => {
                  if (key) price = intlPrices[key];
             }
             const finalPrice = price || (data.invested / data.qty);
-            intlCurrentValEUR += data.qty * finalPrice;
+            const nativeCurrency = intlCurrencies[ticker.toUpperCase()];
+            const rate = getRateToEuro(nativeCurrency, intlRates);
+            intlCurrentValEUR += data.qty * finalPrice * rate;
         }
     });
 

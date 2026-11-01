@@ -5,6 +5,7 @@ import { WatchlistItem } from '../../types';
 import { generateGoogleAppsScript } from '../../utils/scriptGenerator';
 import { CartoonBackground } from '../CartoonBackground';
 import { useSortableData } from '../../hooks/useSortableData';
+import { getCurrencySymbol } from '../../utils/currency';
 
 interface WatchlistViewProps {
   watchlist: WatchlistItem[];
@@ -204,7 +205,7 @@ export const WatchlistView: React.FC<WatchlistViewProps> = ({ watchlist, priceDa
                                 const nativeCurrency = assetCurrencies[tickerUpper];
                                 let itemCurrencySymbol = currencySymbol;
                                 if (context === 'INTERNATIONAL_EQUITY' && nativeCurrency) {
-                                    itemCurrencySymbol = nativeCurrency === 'USD' || nativeCurrency === 'DOLLAR' ? '$' : nativeCurrency === 'CHF' ? 'CHF ' : nativeCurrency === 'GBP' ? '£' : nativeCurrency === 'SEK' ? 'kr ' : nativeCurrency === 'NOK' ? 'kr ' : nativeCurrency === 'EUR' ? '€' : (nativeCurrency + ' ');
+                                    itemCurrencySymbol = getCurrencySymbol(nativeCurrency, currencySymbol);
                                 }
                                 
                                 let callStatus = 'Expensive';

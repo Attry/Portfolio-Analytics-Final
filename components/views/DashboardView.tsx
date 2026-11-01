@@ -224,7 +224,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ metrics, currencyS
                 />
                 <StatsCard 
                     title="Total Invested" 
-                    value={`${currencySymbol}${snapshotInvested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
+                    value={`${currencySymbol}${metrics.totalInvested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
                     icon={<Briefcase />} 
                 />
                 
